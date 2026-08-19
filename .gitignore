@@ -1,0 +1,16 @@
+# Portable local PostgreSQL (see tools/README.md) — binaries + data, not source
+tools/pgsql/
+tools/pgdata/
+tools/*.log
+
+# Node
+**/node_modules/
+**/dist/
+**/coverage/
+
+# Env
+**/.env
+
+# Editor/OS
+.DS_Store
+Thumbs.db

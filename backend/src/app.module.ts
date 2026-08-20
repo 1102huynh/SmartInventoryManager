@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { AuthModule } from './auth/auth.module';
 import { CategoriesModule } from './categories/categories.module';
 import configuration from './config/configuration';
 import { DashboardModule } from './dashboard/dashboard.module';
@@ -20,6 +21,7 @@ import { UsersModule } from './users/users.module';
       load: [configuration],
     }),
     DatabaseModule,
+    AuthModule,
     CategoriesModule,
     SuppliersModule,
     InventoryModule,

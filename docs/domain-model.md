@@ -18,8 +18,9 @@ the system exists to support this core.
 
 - **Product Catalog** — defines *what* can be stocked (Product, optionally Category).
 - **Supplier Management** — defines *who* stock is received from (Supplier).
-- **User Identity** — defines *who* performs actions, for accountability (User). Minimal in
-  MVP: authentication and attribution, not permissions modeling.
+- **User Identity** — defines *who* performs actions, for accountability (User), and *who
+  may act at all* (real authentication as of Phase 3 — see `docs/phase-3-plan.md`).
+  Permissions modeling beyond "authenticated or not" stays deferred (A-5).
 - **Reporting (Dashboard)** — not an independent domain with its own data; it is a read-only
   view composed from Inventory Movement + Product Catalog data (counts, recent activity,
   low-stock list). It owns no entities of its own.
@@ -61,9 +62,10 @@ performed it, and type-specific context (supplier for stock-in; reason for adjus
 optional reason for stock-out). Once created, a transaction is never modified or removed.
 
 ### User
-Represents a person operating the system. Responsible for authentication and for being the
+Represents a person operating the system. Holds real login credentials (a unique email and
+a hashed password, as of Phase 3) and is responsible for authentication and for being the
 attributable actor on every Inventory Transaction. Role/permission distinctions are not
-modeled yet (A-5).
+modeled yet — `role` is descriptive metadata only, not enforced (A-5).
 
 ## 5. Relationships
 

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import * as bcrypt from 'bcrypt';
 import { Category } from '../../categories/category.entity';
 import { EntityStatus } from '../../common/enums/entity-status.enum';
 import { TransactionType } from '../../common/enums/transaction-type.enum';
@@ -23,10 +24,18 @@ const CATEGORY_NAMES = [
   'Break Room & Pantry',
 ];
 
+// Phase 3 (docs/phase-3-plan.md): every seeded user needs real login credentials now.
+// They all share one dev-only password rather than one each — nothing in this
+// project distinguishes them by security posture, and one password is one less thing
+// to look up. It's documented in the root README's local-dev instructions, the same
+// way .env.example documents other dev-only defaults; the plaintext is never stored
+// anywhere, including here — only its bcrypt hash goes into the database.
+const DEV_PASSWORD = 'password123';
+
 const USERS = [
-  { name: 'Jordan Lee', role: 'Staff' },
-  { name: 'Alex Rivera', role: 'Owner' },
-  { name: 'Sam Patel', role: 'Staff' },
+  { name: 'Jordan Lee', role: 'Staff', email: 'jordan@example.com' },
+  { name: 'Alex Rivera', role: 'Owner', email: 'alex@example.com' },
+  { name: 'Sam Patel', role: 'Staff', email: 'sam@example.com' },
 ];
 
 const SUPPLIERS = [
@@ -365,9 +374,14 @@ async function run() {
       );
     const categoryIdByName = new Map(categories.map((c) => [c.name, c.id]));
 
+    const passwordHash = await bcrypt.hash(DEV_PASSWORD, 10);
     const users = await manager
       .getRepository(User)
-      .save(USERS.map((u) => manager.getRepository(User).create(u)));
+      .save(
+        USERS.map((u) =>
+          manager.getRepository(User).create({ ...u, passwordHash }),
+        ),
+      );
 
     const suppliers = await manager
       .getRepository(Supplier)

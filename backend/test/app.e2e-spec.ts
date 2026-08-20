@@ -4,8 +4,14 @@
 // (see tools/README.md) instead of the dev database with its seeded demo data.
 process.env.DB_DATABASE = 'smart_inventory_e2e';
 
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import {
+  ClassSerializerInterceptor,
+  INestApplication,
+  ValidationPipe,
+} from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
+import * as bcrypt from 'bcrypt';
 import { DataSource } from 'typeorm';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
@@ -19,9 +25,17 @@ import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter
 //  - inventory.service.integration.spec.ts: calls the service directly against a
 //    real DB, skipping HTTP/validation.
 // This file is the one place all three layers are proven to work together.
+//
+// Phase 3: every write endpoint now sits behind the global JwtAuthGuard (see
+// docs/phase-3-plan.md), so every test that hits one needs a real token — beforeEach
+// below seeds one user and logs in as them, the same way a real client would, rather
+// than reaching around auth. See auth.e2e-spec.ts for auth's own behavior in detail.
+const TEST_PASSWORD = 'e2e-test-password';
+
 describe('Smart Inventory Manager API (e2e)', () => {
   let app: INestApplication;
   let dataSource: DataSource;
+  let token: string;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -38,6 +52,9 @@ describe('Smart Inventory Manager API (e2e)', () => {
       }),
     );
     app.useGlobalFilters(new AllExceptionsFilter());
+    app.useGlobalInterceptors(
+      new ClassSerializerInterceptor(app.get(Reflector)),
+    );
     await app.init();
     dataSource = moduleRef.get(DataSource);
   });
@@ -50,15 +67,27 @@ describe('Smart Inventory Manager API (e2e)', () => {
     await dataSource.query(
       'TRUNCATE TABLE inventory_transactions, products, suppliers, users, categories RESTART IDENTITY CASCADE',
     );
+    const passwordHash = await bcrypt.hash(TEST_PASSWORD, 10);
     await dataSource.query(
-      `INSERT INTO users (name, role) VALUES ('E2E User', 'Staff')`,
+      `INSERT INTO users (name, role, email, password_hash) VALUES ('E2E User', 'Staff', 'e2e-user@example.com', $1)`,
+      [passwordHash],
     );
+    const login = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: 'e2e-user@example.com', password: TEST_PASSWORD });
+    token = login.body.accessToken;
   });
 
+  // Attach the same way the frontend's Store._request does — see
+  // docs/phase-3-plan.md "Token transport".
+  function auth(req: request.Test): request.Test {
+    return req.set('Authorization', `Bearer ${token}`);
+  }
+
   it('rejects an invalid product payload with 400 and a useful message', async () => {
-    const res = await request(app.getHttpServer())
-      .post('/products')
-      .send({ name: '' });
+    const res = await auth(request(app.getHttpServer()).post('/products')).send(
+      { name: '' },
+    );
     expect(res.status).toBe(400);
     expect(res.body.message).toEqual(
       expect.arrayContaining([expect.stringContaining('name')]),
@@ -66,12 +95,12 @@ describe('Smart Inventory Manager API (e2e)', () => {
   });
 
   it('creates a product, then reflects it in the list with currentStock = 0', async () => {
-    const create = await request(app.getHttpServer())
-      .post('/products')
-      .send({ name: 'Widget', sku: 'W-1', unit: 'each' });
+    const create = await auth(
+      request(app.getHttpServer()).post('/products'),
+    ).send({ name: 'Widget', sku: 'W-1', unit: 'each' });
     expect(create.status).toBe(201);
 
-    const list = await request(app.getHttpServer()).get('/products');
+    const list = await auth(request(app.getHttpServer()).get('/products'));
     expect(list.status).toBe(200);
     expect(list.body).toEqual([
       expect.objectContaining({
@@ -84,43 +113,51 @@ describe('Smart Inventory Manager API (e2e)', () => {
   });
 
   it('rejects a duplicate SKU with 409', async () => {
-    await request(app.getHttpServer())
-      .post('/products')
-      .send({ name: 'Widget', sku: 'W-1', unit: 'each' });
-    const dup = await request(app.getHttpServer())
-      .post('/products')
-      .send({ name: 'Other', sku: 'W-1', unit: 'each' });
+    await auth(request(app.getHttpServer()).post('/products')).send({
+      name: 'Widget',
+      sku: 'W-1',
+      unit: 'each',
+    });
+    const dup = await auth(request(app.getHttpServer()).post('/products')).send(
+      { name: 'Other', sku: 'W-1', unit: 'each' },
+    );
     expect(dup.status).toBe(409);
   });
 
   it('runs a full stock-in → stock-out → history round trip through real HTTP', async () => {
-    const product = await request(app.getHttpServer())
-      .post('/products')
-      .send({ name: 'Widget', sku: 'W-1', unit: 'each', lowStockThreshold: 5 });
+    const product = await auth(
+      request(app.getHttpServer()).post('/products'),
+    ).send({ name: 'Widget', sku: 'W-1', unit: 'each', lowStockThreshold: 5 });
     const id = product.body.id;
 
-    await request(app.getHttpServer())
-      .post(`/products/${id}/stock-in`)
+    await auth(request(app.getHttpServer()).post(`/products/${id}/stock-in`))
       .send({ quantity: 10, occurredAt: '2026-08-01' })
       .expect(201);
 
-    const afterIn = await request(app.getHttpServer()).get(`/products/${id}`);
+    const afterIn = await auth(
+      request(app.getHttpServer()).get(`/products/${id}`),
+    );
     expect(afterIn.body.currentStock).toBe(10);
 
-    await request(app.getHttpServer())
-      .post(`/products/${id}/stock-out`)
+    await auth(request(app.getHttpServer()).post(`/products/${id}/stock-out`))
       .send({ quantity: 3, occurredAt: '2026-08-02' })
       .expect(201);
 
-    const afterOut = await request(app.getHttpServer()).get(`/products/${id}`);
+    const afterOut = await auth(
+      request(app.getHttpServer()).get(`/products/${id}`),
+    );
     expect(afterOut.body.currentStock).toBe(7);
     expect(afterOut.body.lowStock).toBe(false);
 
-    const history = await request(app.getHttpServer()).get(
-      `/products/${id}/transactions`,
+    const history = await auth(
+      request(app.getHttpServer()).get(`/products/${id}/transactions`),
     );
     expect(history.body).toHaveLength(2);
     expect(history.body[0].type).toBe('stock_out'); // newest first
+    // BR-050 attribution still works, but the recorder's user record never leaks its
+    // hash — see main.ts's global ClassSerializerInterceptor.
+    expect(history.body[0].recordedBy.name).toBe('E2E User');
+    expect(history.body[0].recordedBy.passwordHash).toBeUndefined();
   });
 
   it('a pipe-rejected request never leaks a stack trace, over real HTTP', async () => {
@@ -133,10 +170,17 @@ describe('Smart Inventory Manager API (e2e)', () => {
     // non-HttpException Error can't be triggered through any real route in this app,
     // so that branch is covered directly against the filter instead: see
     // all-exceptions.filter.spec.ts.
-    const res = await request(app.getHttpServer()).get(
-      '/products/not-a-number',
+    const res = await auth(
+      request(app.getHttpServer()).get('/products/not-a-number'),
     );
     expect(res.status).toBe(400);
     expect(JSON.stringify(res.body)).not.toMatch(/at\s.+\(.+:\d+:\d+\)/); // no stack frame text
+  });
+
+  it('rejects a write with no token at all', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/products')
+      .send({ name: 'Widget', sku: 'W-1', unit: 'each' });
+    expect(res.status).toBe(401);
   });
 });

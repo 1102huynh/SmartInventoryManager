@@ -1,5 +1,5 @@
-import { ValidationPipe } from '@nestjs/common';
-import { NestFactory } from '@nestjs/core';
+import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
+import { NestFactory, Reflector } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
@@ -29,6 +29,16 @@ async function bootstrap() {
   );
 
   app.useGlobalFilters(new AllExceptionsFilter());
+
+  // A Class Serializer Interceptor runs on the way OUT — after a controller method
+  // returns, before the response is sent — and strips any field marked @Exclude() on
+  // its class (see users/user.entity.ts's passwordHash). Without this, a bcrypt hash
+  // would otherwise leak through any response that embeds a User, including a
+  // transaction's joined `recordedBy` (see InventoryService.listAll). Needs a
+  // Reflector instance (app.get(Reflector), Nest's own DI container) to read the
+  // @Exclude metadata — the same Reflector mechanism @Public()/JwtAuthGuard uses, see
+  // docs/learning-notes/authentication-and-guards.md.
+  app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
 
   const port = process.env.PORT ?? 3000;
   await app.listen(port);

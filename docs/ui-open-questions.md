@@ -65,6 +65,9 @@ of these — see them resolved (or left open) here, then fold the outcome back i
   Lee · Staff" chip in the top bar) to keep FR-061 attribution visible.
 - **Options**: (a) confirm login can stay out of the Phase 1 mockup and gets designed
   in a later pass, or (b) add a minimal login screen now for completeness.
+- **Resolved (Phase 3)**: option (a) — a real login screen (`Views.login`,
+  `frontend/index.html`) replaced the static chip once real authentication existed to
+  back it. See `docs/phase-3-plan.md` §3 "Frontend changes".
 
 ## Q-UI-5: Should a deactivated Supplier's past transactions still show it?
 
@@ -112,7 +115,7 @@ of these — see them resolved (or left open) here, then fold the outcome back i
 
 ## Not Represented / Deferred (for the Scope Validation summary)
 
-- **FR-060 (Login screen)** — see Q-UI-4.
+- **FR-060 (Login screen)** — see Q-UI-4. Resolved in Phase 3.
 - **Category hierarchy (Q-5)** — still open in product.md; mockup uses a flat list,
   consistent with the "reasonable default" framing there.
 - **Q-6 (adjustment approval workflow)** — still open; mockup has no approval step,

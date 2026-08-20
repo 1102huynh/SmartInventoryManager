@@ -77,7 +77,7 @@ must satisfy.
 
 | ID | Name | Description | Priority | Notes / Assumptions |
 |---|---|---|---|---|
-| FR-060 | User login | A user must authenticate to use the system. | Must | Minimal auth; RBAC deferred (A-5) |
+| FR-060 | User login | A user must authenticate to use the system. | Must | **Done** (Phase 3) — JWT login (`POST /auth/login`), every write behind a global guard. RBAC still deferred (A-5). See `docs/phase-3-plan.md`. |
 | FR-061 | Attribute transactions to user | Every stock-in, stock-out, and adjustment records which user performed it. | Must | Supports auditability, BR-050 |
 
 ## Cross-Reference Summary

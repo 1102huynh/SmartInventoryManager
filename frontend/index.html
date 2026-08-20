@@ -127,6 +127,15 @@ table{border-collapse:collapse; width:100%;}
   .content{padding:20px 16px 48px;}
 }
 
+/* ============================= LOGIN ============================= */
+.login-page{min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; background:var(--bg);}
+.login-card{width:100%; max-width:380px;}
+.login-brand{margin-bottom:22px;}
+.login-brand .wordmark{font-family:var(--font-display); font-weight:800; font-size:1.35rem; letter-spacing:.3px; color:var(--ink); text-transform:uppercase;}
+.login-brand .wordmark span{color:var(--accent);}
+.login-brand .tagline{font-size:.7rem; color:var(--ink-faint); margin-top:2px; letter-spacing:.4px; text-transform:uppercase;}
+.login-card h1{font-size:1.3rem;}
+
 /* ============================= BUTTONS ============================= */
 .btn{
   display:inline-flex; align-items:center; gap:6px; justify-content:center; white-space:nowrap;
@@ -298,11 +307,18 @@ function todayInputValue(){
   return `${y}-${m}-${day}`;
 }
 
-// Populated once at startup by Store.init() (see ROUTER/INIT) — categories rarely
+// Populated once right after login (see Store.loadReferenceData) — categories rarely
 // change and every screen that needs them (product list/detail/form) can just read
 // this array synchronously instead of re-fetching on every render.
 let CATEGORIES = [];
-let CURRENT_USER = null; // { id, name, role } — the demo "signed in as" user (see Store.init)
+let CURRENT_USER = null; // { id, name, role } — set by Store.login(), cleared by Store.logout()
+
+// Phase 3 (docs/phase-3-plan.md "Token transport"): held in a plain JS variable, not
+// localStorage — matching how the rest of Store already avoids persisting anything
+// client-side. The one consequence worth stating plainly: a page refresh loses this
+// and logs the user out. That's an accepted MVP tradeoff for a single-page tool with
+// no build step, not a bug.
+let ACCESS_TOKEN = null;
 
 /* SECTION:STORE */
 // Phase 1's Store computed everything from local arrays. Phase 2's Store is a thin
@@ -332,23 +348,34 @@ function normalizeTx(t){
 }
 
 const Store = {
-  // Every request goes through here: it attaches the "current user" header (see
-  // docs/backend-use-cases.md "Deferred: Authentication" for why this is a header
-  // and not a real session), and turns a non-2xx response into a thrown Error whose
-  // message is exactly what the API's ValidationPipe/exception filter sent back —
-  // the same message a `try { await Store.x() } catch (err) { err.message }` pattern
-  // in the wizards already expected from Phase 1's synchronous version.
+  // Every request goes through here: it attaches the bearer token (see
+  // docs/phase-3-plan.md "Token transport" — this replaces Phase 2's client-supplied
+  // `x-user-id` header with a server-verified token), and turns a non-2xx response
+  // into a thrown Error whose message is exactly what the API's
+  // ValidationPipe/exception filter sent back — the same message a
+  // `try { await Store.x() } catch (err) { err.message }` pattern in the wizards
+  // already expected from Phase 1's synchronous version.
   async _request(method, path, body){
     const options = { method, headers: {} };
     if (body !== undefined){
       options.headers['Content-Type'] = 'application/json';
       options.body = JSON.stringify(body);
     }
-    if (CURRENT_USER) options.headers['x-user-id'] = String(CURRENT_USER.id);
+    if (ACCESS_TOKEN) options.headers['Authorization'] = `Bearer ${ACCESS_TOKEN}`;
     const res = await fetch(API_BASE + path, options);
     if (res.status === 204) return null;
     let data = null;
     try { data = await res.json(); } catch (e) { /* empty body */ }
+    // A 401 here means the token we were holding (if any) is no longer good enough —
+    // missing, expired, or malformed. Discard it and bounce back to the login screen.
+    // Excluded for /auth/login itself: a *wrong password* also comes back as 401, and
+    // that's a form validation error the login screen should display inline, not a
+    // "your session expired" redirect (see Views.login).
+    if (res.status === 401 && path !== '/auth/login'){
+      ACCESS_TOKEN = null;
+      CURRENT_USER = null;
+      if (location.hash !== '#/login') UI.navigate('#/login'); else renderApp();
+    }
     if (!res.ok){
       const message = data && (Array.isArray(data.message) ? data.message.join(' ') : data.message);
       throw new Error(message || `Request failed (${res.status}).`);
@@ -356,15 +383,32 @@ const Store = {
     return data;
   },
 
-  // Called once at startup (see SECTION:INIT) — fetches the small reference data
-  // every screen needs before the first route even renders.
-  async init(){
-    const [categories, users] = await Promise.all([
-      this._request('GET', '/categories'),
-      this._request('GET', '/users'),
-    ]);
-    CATEGORIES = categories;
-    CURRENT_USER = users[0] || null; // mirrors Phase 1's static "signed in as" demo user
+  // FR-060. Every write endpoint requires a token now (JwtAuthGuard, registered
+  // globally — see docs/phase-3-plan.md "Guard rollout"), so nothing else in Store
+  // can succeed until this has run. Loads reference data (categories) as part of
+  // login rather than leaving the caller to remember a second step — every view that
+  // reads CATEGORIES synchronously needs it populated by the time the post-login
+  // route first renders.
+  async login(email, password){
+    const result = await this._request('POST', '/auth/login', { email, password });
+    ACCESS_TOKEN = result.accessToken;
+    CURRENT_USER = result.user;
+    await this.loadReferenceData();
+    return result.user;
+  },
+
+  // Client-side only, no server call — a stateless JWT can't be revoked without
+  // adding the exact kind of server-side state a JWT is meant to avoid (see
+  // docs/phase-3-plan.md "Logout: client-side only, no revocation list"). Signing
+  // out just means the frontend forgets the token.
+  logout(){
+    ACCESS_TOKEN = null;
+    CURRENT_USER = null;
+    if (location.hash === '#/login') renderApp(); else UI.navigate('#/login');
+  },
+
+  async loadReferenceData(){
+    CATEGORIES = await this._request('GET', '/categories');
   },
 
   getCategory(id){ return CATEGORIES.find(c => c.id === id) || null; },
@@ -609,8 +653,9 @@ function shellTemplate(section){
     <a class="nav-item${section===key?' active':''}" href="${hash}">
       ${UI.icon(icon)}<span class="label">${label}</span>
     </a>`;
-  // CURRENT_USER is populated once by Store.init() before the first call to
-  // renderApp() (see SECTION:INIT) — by the time any view renders, it's always set.
+  // CURRENT_USER is set by Store.login() — renderApp() (see SECTION:ROUTER) never
+  // calls into shellTemplate at all until a login has actually succeeded, so it's
+  // always set by the time any view renders.
   const user = CURRENT_USER || { initials: '?', name: 'Unknown', role: '' };
   return `
   <div class="app-shell">
@@ -632,6 +677,7 @@ function shellTemplate(section){
         <div class="user-chip">
           <div class="user-avatar">${UI.esc(user.initials || user.name.slice(0,2).toUpperCase())}</div>
           <div class="user-meta"><div class="name">${UI.esc(user.name)}</div><div class="role">${UI.esc(user.role)}</div></div>
+          <button class="btn btn-ghost btn-sm" id="logout-btn" type="button">Sign out</button>
         </div>
       </header>
       <main class="content" id="view"></main>
@@ -647,11 +693,27 @@ function parseHash(){
 }
 
 function renderApp(){
-  if (!location.hash || location.hash === '#'){ location.hash = '#/dashboard'; return; }
-  const { parts, query } = parseHash();
   const root = document.getElementById('root');
+
+  // Gate the whole app shell on having a token, rather than a route guard on each
+  // individual view — one check instead of one per screen, and it can't be
+  // forgotten on a route added later (same "register the cross-cutting thing once"
+  // reasoning the backend's global JwtAuthGuard follows — see
+  // docs/phase-3-plan.md "Guard rollout"). Whatever hash the user landed on is
+  // simply ignored until they've signed in.
+  if (!ACCESS_TOKEN){
+    root.innerHTML = '';
+    Views.login(root);
+    return;
+  }
+  if (!location.hash || location.hash === '#' || location.hash === '#/login'){
+    location.hash = '#/dashboard';
+    return;
+  }
+  const { parts, query } = parseHash();
   const section = parts[0] || 'dashboard';
   root.innerHTML = shellTemplate(section);
+  document.getElementById('logout-btn').addEventListener('click', () => Store.logout());
   const view = document.getElementById('view');
   const crumb = document.getElementById('topbar-title');
 
@@ -706,6 +768,76 @@ function renderApp(){
 
 /* SECTION:VIEWS */
 const Views = {};
+// -------------------------------------------------------------- Login --
+// FR-060. Replaces Phase 1's static "Signed in as Jordan Lee · Staff" chip
+// (ui-open-questions.md Q-UI-4) with a real credential form — see
+// docs/phase-3-plan.md §3 "Frontend changes". Rendered outside the app shell
+// entirely (no sidebar/topbar — there's nothing to navigate to yet), and reachable
+// only through renderApp()'s auth gate, never a nav link.
+Views.login = function(container){
+  let submitting = false;
+  let error = null;
+
+  function render(){
+    container.innerHTML = `
+      <div class="login-page">
+        <div class="card card-pad login-card">
+          <div class="login-brand">
+            <div class="wordmark">Smart<span>Inventory</span></div>
+            <div class="tagline">Manager</div>
+          </div>
+          <h1>Sign in</h1>
+          <div class="sub" style="margin-bottom:18px">Use your Smart Inventory Manager account to continue.</div>
+          ${error ? `<div class="inline-notice warn" style="margin-bottom:14px">${UI.icon('warning')}<span>${UI.esc(error)}</span></div>` : ''}
+          <form id="login-form">
+            <div class="field">
+              <label for="lf-email">Email <span class="req">*</span></label>
+              <input type="email" id="lf-email" autocomplete="username" required>
+            </div>
+            <div class="field">
+              <label for="lf-password">Password <span class="req">*</span></label>
+              <input type="password" id="lf-password" autocomplete="current-password" required>
+            </div>
+            <div class="form-actions">
+              <button class="btn btn-primary btn-block" type="submit" ${submitting ? 'disabled' : ''}>${submitting ? 'Signing in…' : 'Sign in'}</button>
+            </div>
+          </form>
+        </div>
+      </div>`;
+    attach();
+  }
+
+  function attach(){
+    const form = container.querySelector('#login-form');
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      if (submitting) return;
+      const email = container.querySelector('#lf-email').value.trim();
+      const password = container.querySelector('#lf-password').value;
+      submitting = true;
+      error = null;
+      render();
+      Store.login(email, password)
+        .then(() => {
+          // Usually a hash change (from '#/login' or empty) fires renderApp() via
+          // the hashchange listener on its own — but if the address bar already
+          // read '#/dashboard' (e.g. the user typed that URL while logged out),
+          // setting the same hash again is a no-op that fires no event, so render
+          // directly in that one case instead of leaving the login form on screen.
+          if (location.hash === '#/dashboard') renderApp();
+          else UI.navigate('#/dashboard');
+        })
+        .catch(err => {
+          submitting = false;
+          error = err.message || 'Could not sign in. Please try again.';
+          render();
+        });
+    });
+    container.querySelector('#lf-email').focus();
+  }
+
+  render();
+};
 // -------------------------------------------------------------- Dashboard --
 // FR-050: the dashboard has no data of its own — it composes counts and a recent
 // slice of transactions that already exist in Product/Inventory Transaction.
@@ -1704,21 +1836,16 @@ Views.supplierForm = function(container, id){
 /* SECTION:INIT */
 window.addEventListener('hashchange', renderApp);
 
-// Store.init() has to resolve (categories + current user fetched) before the very
-// first renderApp() — shellTemplate reads CURRENT_USER synchronously, and several
-// views read the cached CATEGORIES array synchronously too. Route changes after
-// startup don't need to wait on anything, hence hashchange going straight to
-// renderApp above, but this very first render does.
+// Phase 2 fetched reference data (categories + a demo "current user") before the very
+// first render, since nothing was gated on authentication yet. Phase 3 flips that:
+// every endpoint except POST /auth/login now requires a token nothing has yet (see
+// docs/phase-3-plan.md), so there is nothing safe to fetch before the user has
+// actually signed in — renderApp()'s own auth gate handles showing the login screen,
+// and Store.login() is what fetches categories once a token exists. boot() just
+// needs to kick off that first render; if the API turns out to be unreachable, the
+// login form surfaces that itself the moment someone submits it (Views.login).
 function boot(){
-  document.getElementById('root').innerHTML = `<div style="padding:40px;color:var(--ink-muted)">Loading Smart Inventory Manager…</div>`;
-  Store.init()
-    .then(renderApp)
-    .catch(err => {
-      document.getElementById('root').innerHTML = `<div style="padding:40px;max-width:480px">${UI.errorState(
-        `Could not reach the API at ${API_BASE}. Is the backend running? (${err.message})`, 'boot-retry'
-      )}</div>`;
-      document.getElementById('boot-retry')?.addEventListener('click', boot);
-    });
+  renderApp();
 }
 
 if (document.readyState === 'loading') window.addEventListener('DOMContentLoaded', boot);

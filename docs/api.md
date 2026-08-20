@@ -1,16 +1,26 @@
-# API Documentation — Phase 2
+# API Documentation — Phase 3
 
-Status: Phase 2 — NestJS Backend
+Status: Phase 3 — Authentication & Session Handling
 Base URL: `http://localhost:3000` (see `backend/.env.example`)
 
-All request bodies are JSON. All write endpoints accept an `x-user-id` header
-identifying who's performing the action (see `backend-use-cases.md`, "Deferred:
-Authentication" — this is attribution, not real auth; it defaults to user `1` if
-omitted). Validation errors return `400` with `{ statusCode, message: string[], error }`.
+All request bodies are JSON. **Every route except `POST /auth/login` requires a valid
+token** — `Authorization: Bearer <accessToken>` (see "Auth" below and
+`docs/phase-3-plan.md`). A missing, malformed, or expired token returns `401`. This
+replaces Phase 2's `x-user-id` header, which no longer does anything — attribution
+(FR-061) now comes from the verified token, not a client-supplied value.
+
+Validation errors return `400` with `{ statusCode, message: string[], error }`.
 Business-rule violations (insufficient stock, inactive product, duplicate SKU, …)
 return `409` with `{ statusCode, message: string, error }`. Not-found resources return
 `404` in the same shape. Unexpected errors return a generic `500` (see
 `AllExceptionsFilter`) and never leak internals.
+
+## Auth
+
+| Method | Path | Body | Notes |
+|---|---|---|---|
+| POST | `/auth/login` | `{ email, password }` | The only route not requiring a token. `401` on wrong email/password — deliberately the same message for both, so the response never reveals which one was wrong. On success: `{ accessToken, user: { id, name, role } }`. Token expires after 12h (no refresh token — see `docs/phase-3-plan.md`). |
+| GET | `/auth/me` | — | Returns the caller's own user record (resolved from the token), minus `passwordHash`. |
 
 ## Categories
 
@@ -75,4 +85,4 @@ threshold shows up in `outOfStockCount` but not here.
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/users` | Seeded demo users only — no create/login endpoint exists yet (see "Deferred: Authentication") |
+| GET | `/users` | Seeded demo users only — still no create/signup endpoint (see `docs/phase-3-plan.md` "No self-service signup"); responses never include `passwordHash` |

@@ -10,6 +10,10 @@ export interface AppConfig {
     password: string;
     database: string;
   };
+  auth: {
+    jwtSecret: string;
+    jwtExpiresIn: string;
+  };
 }
 
 // Passed to ConfigModule.forRoot({ load: [configuration] }) — Nest calls this once at
@@ -22,5 +26,14 @@ export default (): AppConfig => ({
     username: process.env.DB_USERNAME ?? 'postgres',
     password: process.env.DB_PASSWORD ?? '',
     database: process.env.DB_DATABASE ?? 'smart_inventory',
+  },
+  auth: {
+    // The fallback is only ever hit in local dev (a missing .env) — never rely on it
+    // outside that, which is exactly why .env.example ships its own random-looking
+    // dev value instead of leaving this unset.
+    jwtSecret: process.env.JWT_SECRET ?? 'dev-only-insecure-secret-change-me',
+    // Phase 3 design decision: one access token, no refresh token, expiring after a
+    // full shift — see docs/phase-3-plan.md "Token: a single JWT access token".
+    jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? '12h',
   },
 });

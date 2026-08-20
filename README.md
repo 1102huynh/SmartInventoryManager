@@ -37,6 +37,16 @@ npm run start:dev
 
 The API listens on `http://localhost:3000`.
 
+**Signing in:** every route except `POST /auth/login` now requires a token (see
+`docs/phase-3-plan.md`). Every seeded demo user (`npm run seed`) shares one dev-only
+password:
+
+| Email | Password | Role |
+|---|---|---|
+| `jordan@example.com` | `password123` | Staff |
+| `alex@example.com` | `password123` | Owner |
+| `sam@example.com` | `password123` | Staff |
+
 **3. Start the frontend:**
 
 ```
@@ -58,7 +68,8 @@ See `docs/learning-notes/testing-strategy.md` for what each of these actually pr
 
 ## Current phase
 
-Phase 2 — NestJS backend + PostgreSQL, wired to the Phase 1 UI. See
-`docs/backend-use-cases.md` for what was built and why, and the phase's closing
-summary (in the conversation, or ask for it to be re-derived) for architecture
-observations about what might eventually move to Go/Kafka.
+Phase 3 — JWT authentication (`docs/phase-3-plan.md`): real login, every write behind a
+global guard, FR-060 now Done. Phase 2 (`docs/backend-use-cases.md`) built the NestJS
+backend + PostgreSQL wired to the Phase 1 UI; see its closing summary (in the
+conversation, or ask for it to be re-derived) for architecture observations about what
+might eventually move to Go/Kafka.

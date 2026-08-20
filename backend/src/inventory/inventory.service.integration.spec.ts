@@ -43,9 +43,15 @@ describe('InventoryService (integration)', () => {
     await dataSource.query(
       'TRUNCATE TABLE inventory_transactions, products, suppliers, users, categories RESTART IDENTITY CASCADE',
     );
-    const user = await dataSource
-      .getRepository(User)
-      .save({ name: 'Test User', role: 'Staff' });
+    const user = await dataSource.getRepository(User).save({
+      name: 'Test User',
+      role: 'Staff',
+      email: 'test-user@example.com',
+      // Not exercised by anything in this file (no login here — see auth.e2e-spec.ts
+      // and auth.service.spec.ts for that) — the users.password_hash column is just
+      // NOT NULL, so a row needs *something* in it.
+      passwordHash: 'unused-in-this-test',
+    });
     userId = user.id;
     const product = await dataSource.getRepository(Product).save({
       sku: 'TEST-1',

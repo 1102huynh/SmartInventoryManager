@@ -38,6 +38,10 @@ write endpoint accepts an `x-user-id` header identifying who's performing the ac
 (attribution) working end-to-end while honestly leaving FR-060 (login) for a later
 phase, when Guards become the right tool for the job.
 
+**Update (Phase 3):** that later phase arrived — see `docs/phase-3-plan.md`. The
+`x-user-id` header described above no longer exists; `CurrentUserId` now reads a
+JWT-verified `request.user.id` instead, exactly the seam this section predicted.
+
 ---
 
 ## Use Cases

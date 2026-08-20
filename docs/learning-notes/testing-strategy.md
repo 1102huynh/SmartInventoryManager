@@ -36,14 +36,26 @@ Each layer catches a different class of mistake, and using only one leaves a gap
   (`suppliers.service.spec.ts`, fast, mocked repository) and the integration test
   (`inventory.service.integration.spec.ts`, slower, needs the local Postgres from
   `tools/` running, targets the separate `smart_inventory_test` database).
-- `npm run test:e2e` runs `test/app.e2e-spec.ts` against the separate
-  `smart_inventory_e2e` database, booting the actual `AppModule` with the same
-  `ValidationPipe`/`AllExceptionsFilter` setup `main.ts` uses.
+- `npm run test:e2e` runs every `*.e2e-spec.ts` under `test/` (`app.e2e-spec.ts` and,
+  as of Phase 3, `auth.e2e-spec.ts`) against the separate `smart_inventory_e2e`
+  database, booting the actual `AppModule` with the same
+  `ValidationPipe`/`AllExceptionsFilter`/`ClassSerializerInterceptor` setup `main.ts`
+  uses.
 
 Two *different* physical test databases (`smart_inventory_test` and
 `smart_inventory_e2e`), not one — Jest can run test files in parallel, and the
 integration test's `dropSchema: true` setup would otherwise race against the e2e
 test's own data.
+
+That same "Jest runs files in parallel" fact bites *within* the e2e layer too, once
+there's more than one e2e spec file: `app.e2e-spec.ts` and `auth.e2e-spec.ts` both
+`TRUNCATE`/seed the *same* `smart_inventory_e2e` database in their own `beforeEach`,
+so running them in separate parallel workers lets one file's truncate wipe out data
+the other file's test is mid-way through using (surfaced as flaky, seemingly unrelated
+failures — a SKU that should have been unique to one test colliding with a leftover
+row from the other file's last run). `test:e2e`'s npm script passes `--runInBand`
+specifically to force all e2e files onto one worker, in sequence, for exactly this
+reason. This wasn't needed back when there was only one e2e file to run.
 
 ## Example
 

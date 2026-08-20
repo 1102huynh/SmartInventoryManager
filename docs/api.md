@@ -67,6 +67,10 @@ names.
 |---|---|---|
 | GET | `/dashboard/summary` | `{ activeProductsCount, inactiveProductsCount, lowStockCount, outOfStockCount, transactionsLast7Days, recentActivity: Transaction[], needsAttention: Product[] }` |
 
+`needsAttention` is the low-stock list (BR-060/061), not a merged low-stock +
+out-of-stock list — see BR-062 for why an out-of-stock product with no configured
+threshold shows up in `outOfStockCount` but not here.
+
 ## Users
 
 | Method | Path | Notes |

@@ -45,6 +45,11 @@ export class DashboardService {
       outOfStockCount: outOfStockProducts.length,
       transactionsLast7Days: last7DaysTransactions.length,
       recentActivity: recentTransactions.slice(0, 8),
+      // BR-062: needsAttention is deliberately the low-stock list only, not low-stock
+      // + out-of-stock merged. A product with no threshold configured is out of stock
+      // "silently" here (still counted in outOfStockCount above) — that's BR-061
+      // ("never flagged low-stock without a threshold") applied consistently, not a
+      // gap. See docs/business-rules.md BR-062 for the full reasoning.
       needsAttention: lowStockProducts
         .map((p) => ({ ...p, currentStock: stockMap.get(p.id) ?? 0 }))
         .slice(0, 5),

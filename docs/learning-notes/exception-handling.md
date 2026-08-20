@@ -46,9 +46,21 @@ throws `ConflictException` for insufficient stock, `ProductsService.remove` thro
 
 ## Example
 
-`test/app.e2e-spec.ts`, "an unhandled error never leaks a stack trace to the client",
-asserts the response body never contains anything that looks like a stack frame —
-proving the filter's fallback path actually works over real HTTP, not just in theory.
+The filter's two branches are proven in two different places, deliberately:
+
+- `all-exceptions.filter.spec.ts` calls `filter.catch()` directly with a plain
+  `Error`, and asserts the response is the generic 500 (the original message never
+  appears in it) while the real detail still reaches the server-side logger. This is
+  the branch that actually needs proving, and there's no legitimate HTTP route in
+  this app that throws a plain `Error` on purpose — every real rejection is a
+  specific `HttpException` subclass — so a unit test against the filter itself is the
+  only way to trigger it deterministically.
+- `test/app.e2e-spec.ts`, "a pipe-rejected request never leaks a stack trace, over
+  real HTTP", triggers `ParseIntPipe`'s `BadRequestException` and asserts the same
+  "no stack frame" property over a real HTTP round trip. This proves the *other*
+  branch (`instanceof HttpException` → pass its response through) is wired correctly
+  end-to-end — it does **not** exercise the fallback branch, even though an earlier
+  version of this test's name implied it did.
 
 ## Common Mistakes
 

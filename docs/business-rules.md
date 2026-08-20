@@ -87,6 +87,24 @@ involved.
 - **BR-061** [Assumption] — **Threshold configuration.** The threshold is set per product by
   the user. Behavior when no threshold is set (e.g., treated as "no threshold configured,
   never flagged" vs. a system default) is open — see product.md Q-3. → FR-040
+- **BR-062** [Decided 2026-08-20, Phase 2.1 review] — **Dashboard "needs attention" scope.**
+  The dashboard's `needsAttention` list is exactly the low-stock list (BR-060/061) — the
+  same set FR-042 already defines — not a merged low-stock + out-of-stock list. A product
+  that is out of stock but has no threshold configured therefore contributes to
+  `outOfStockCount` (FR-050) without appearing in `needsAttention`; this is intentional,
+  not an oversight:
+  - FR-050 explicitly composes the dashboard from FR-042 ("view low-stock list"), not from
+    a separate out-of-stock requirement — `outOfStockCount` is dashboard-level convenience,
+    not something `needsAttention` is obligated to absorb.
+  - For any product that *does* have a threshold, being out of stock already implies
+    low-stock (`0 <= threshold` whenever `threshold >= 0`), so it already appears in
+    `needsAttention`. The only excluded case is a product with no threshold set at all —
+    exactly the case BR-061 already says is never flagged, applied consistently.
+  - Merging the two would make an unconfigured product louder on the dashboard than a
+    configured one someone deliberately tuned — the opposite of what threshold
+    configuration is for.
+  → FR-050, FR-042, BR-060, BR-061. See `docs/api.md` (Dashboard) and
+  `DashboardService.getSummary` for where this is implemented.
 
 ## Rules Explicitly Deferred (Future scope, not defined now)
 

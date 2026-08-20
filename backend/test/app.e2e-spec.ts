@@ -123,9 +123,16 @@ describe('Smart Inventory Manager API (e2e)', () => {
     expect(history.body[0].type).toBe('stock_out'); // newest first
   });
 
-  it('an unhandled error never leaks a stack trace to the client', async () => {
-    // A malformed :id param that ParseIntPipe rejects is the easiest way to trigger
-    // the exception path from outside without reaching into internals.
+  it('a pipe-rejected request never leaks a stack trace, over real HTTP', async () => {
+    // A malformed :id param makes ParseIntPipe throw BadRequestException — an
+    // HttpException, so AllExceptionsFilter takes its *first* branch (pass the
+    // exception's own response through), not the fallback branch for unanticipated
+    // errors. This still proves something real (the pipe → filter → response chain
+    // is wired correctly over actual HTTP, and even this "normal" rejection path
+    // doesn't leak anything), but NOT that the fallback branch works — a plain,
+    // non-HttpException Error can't be triggered through any real route in this app,
+    // so that branch is covered directly against the filter instead: see
+    // all-exceptions.filter.spec.ts.
     const res = await request(app.getHttpServer()).get(
       '/products/not-a-number',
     );

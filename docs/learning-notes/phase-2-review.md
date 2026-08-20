@@ -403,9 +403,15 @@ distinction the filter exists to enforce — see
 
 Three layers, each proving something the others can't:
 
-- **Unit** — `suppliers.service.spec.ts`. Mocks the repository entirely
-  (`{ provide: getRepositoryToken(Supplier), useValue: repo }`); no database, no
-  HTTP. Fast, precise, but can't validate real database behavior.
+- **Unit** — `suppliers.service.spec.ts` (mocks the repository entirely, via
+  `{ provide: getRepositoryToken(Supplier), useValue: repo }`), joined since the Phase
+  2.1 review by `products.service.spec.ts` (SKU uniqueness and the BR-001 SKU/history
+  rule, `ProductsService`'s repository *and* `InventoryService` both mocked),
+  `dashboard.service.spec.ts` (the BR-062 needs-attention/out-of-stock split), and
+  `all-exceptions.filter.spec.ts` (the filter's fallback branch, called directly
+  rather than through HTTP, since no real route in this app throws a plain
+  non-`HttpException` error to trigger it). No database, no HTTP in any of them.
+  Fast, precise, but can't validate real database behavior.
 - **Integration** — `inventory.service.integration.spec.ts`. Real PostgreSQL (a
   dedicated `smart_inventory_test` database, `database/test-data-source.ts`), no
   HTTP. This is the layer that exists specifically because a mocked repository has no

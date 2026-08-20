@@ -1,7 +1,7 @@
 # Product Definition — Smart Inventory Manager
 
 Status: Phase 0 — Product & Business Analysis
-Last updated: 2026-08-19
+Last updated: 2026-08-20
 
 ## 1. Product Vision
 
@@ -143,8 +143,10 @@ These affect the UI mockup and should be resolved before or during that phase.
   (see BR-061).
 - **Q-4**: Should stock-out represent only internal/manual removal, or should it also model
   a "sale" concept (customer, price)? This affects whether a Sale/Order entity is needed.
-- **Q-5**: Do product categories need a hierarchy (categories/subcategories), or is a flat
-  list sufficient?
+- **Q-5 [Resolved 2026-08-20, Phase 4]**: Flat list — no hierarchy. `Category` has never
+  had a `parentId`, and nothing about building CRUD (Phase 4) changed the argument for
+  staying flat: a small business's product list doesn't need subcategories. See
+  `docs/phase-4-plan.md` §1.
 - **Q-6**: Should adjustments require any approval step (e.g., manager confirmation), or is
   a recorded reason sufficient for MVP?
 - **Q-7**: Multi-location support — confirmed out of MVP, but is it a near-term Future item

@@ -1,7 +1,7 @@
 # Conceptual Domain Model — Smart Inventory Manager
 
 Status: Phase 0 — Product & Business Analysis
-Last updated: 2026-08-19
+Last updated: 2026-08-20
 
 This is a **conceptual** domain model: it describes the business concepts, their
 responsibilities, and their relationships. It intentionally excludes database schemas,
@@ -48,7 +48,11 @@ threshold. Does not hold its own "quantity" field as a source of truth — quant
 from its transactions.
 
 ### Category (supporting, Should Have)
-Groups products for organization/filtering. Has no behavior of its own beyond classification.
+Groups products for organization/filtering. Has no behavior of its own beyond
+classification — still true after Phase 4, which added create/update/delete for
+categories themselves (`docs/phase-4-plan.md`); that's CRUD on the entity, not new
+behavior the entity performs. Flat only, by design — no parent/subcategory relationship
+(Q-5, resolved).
 
 ### Supplier
 Represents an external source of stock. Responsible for identity and contact information,

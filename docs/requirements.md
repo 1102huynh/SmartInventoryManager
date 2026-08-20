@@ -1,7 +1,7 @@
 # Functional Requirements — Smart Inventory Manager
 
 Status: Phase 0 — Product & Business Analysis
-Last updated: 2026-08-19
+Last updated: 2026-08-20
 
 Priority legend: **Must** (MVP), **Should** (near-term, non-blocking), **Future** (postponed).
 See `product.md` for scope rationale and `business-rules.md` for the rules each requirement
@@ -15,7 +15,7 @@ must satisfy.
 | FR-002 | Edit product | User can edit a product's editable details (name, threshold, category, etc.). SKU identity should not be freely changeable once transactions exist. | Must | See BR-001 |
 | FR-003 | Activate / deactivate product | User can mark a product Active or Inactive. Inactive products are excluded from new stock-in/out transactions. | Must | See BR-002 |
 | FR-004 | View product list & detail | User can view all products with current stock and status, and drill into a single product's detail. | Must | Detail view links to FR-030 (history) |
-| FR-005 | Categorize product | User can optionally assign a product to a category for organization/filtering. | Should | Q-5: flat vs hierarchical categories |
+| FR-005 | Categorize product | User can optionally assign a product to a category for organization/filtering. | Should | **Done** (Phase 4) — full Category CRUD (`POST`/`PATCH`/`DELETE /categories`). Q-5 resolved: flat, no hierarchy — see `docs/phase-4-plan.md` §1. |
 | FR-006 | Prevent product deletion with history | Products that have transaction history cannot be hard-deleted, only deactivated. | Must | See BR-004 |
 
 ## Supplier Management

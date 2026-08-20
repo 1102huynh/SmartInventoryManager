@@ -1,98 +1,73 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Smart Inventory Manager — Backend
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+The NestJS + PostgreSQL API behind Smart Inventory Manager. See the root
+[`README.md`](../README.md) for how this fits with the frontend and local
+PostgreSQL setup, and `docs/` (in the repo root) for the product definition,
+requirements, business rules, and domain model this API implements.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## What's here
 
-## Description
+A REST API covering products, categories, suppliers, inventory transactions
+(stock-in / stock-out / adjustment), a read-only dashboard summary, and JWT-based
+login — see `../docs/api.md` for the full endpoint reference and
+`../docs/backend-use-cases.md` for how the modules fit together. Every write
+endpoint requires a valid token (`docs/phase-3-plan.md`); there is no role-based
+permission model yet (A-5 in `docs/product.md` stays deferred).
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Setup
 
-## Project setup
+Requires the local PostgreSQL in `../tools/` to be running (see
+`../tools/README.md`) — this backend doesn't manage its own database.
 
 ```bash
-$ npm install
+npm install
+cp .env.example .env      # only needed once — see .env.example for what each var does
+npm run migration:run     # only needed once, or after a new migration is added
+npm run seed               # only needed once, or to reset the demo data
+npm run start:dev          # watch mode
 ```
 
-## Compile and run the project
+The API listens on `http://localhost:3000` by default (`PORT` in `.env`).
+
+**Signing in:** every route except `POST /auth/login` requires a bearer token. Every
+seeded demo user (`npm run seed`) shares one dev-only password, `password123`
+(`jordan@example.com`, `alex@example.com`, `sam@example.com` — see
+`src/database/seeds/run-seed.ts`).
+
+## Tests
+
+This project uses three distinct kinds of test — see
+`../docs/learning-notes/testing-strategy.md` for why each one exists and what it
+proves that the others can't:
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm test          # unit + integration — needs Postgres running, uses smart_inventory_test
+npm run test:e2e  # end-to-end, real HTTP — needs Postgres running, uses smart_inventory_e2e
+npm run test:cov  # unit + integration, with coverage
 ```
 
-## Run tests
+Both `smart_inventory_test` and `smart_inventory_e2e` are separate databases from the
+dev database (`smart_inventory`) — each test run truncates its tables, so tests never
+touch or depend on seeded demo data. Run `npm run migration:run` with `DB_DATABASE`
+pointed at each before the first run (see how `test/*.e2e-spec.ts` set
+`process.env.DB_DATABASE` for the exact name).
+
+## Other scripts
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npm run build              # compile to dist/
+npm run start:prod         # run the compiled build
+npm run lint                # eslint --fix
+npm run migration:generate  # generate a new migration from entity changes
+npm run migration:revert    # roll back the last migration
 ```
 
-## Deployment
+## More context
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- `../docs/api.md` — endpoint-by-endpoint reference.
+- `../docs/business-rules.md` / `../docs/domain-model.md` — the rules and entities
+  this API enforces and models.
+- `../docs/learning-notes/` — NestJS concepts (DI, guards, transactions, DTOs, …)
+  explained against this project's actual code, written while building it.
+- `../docs/phase-3-plan.md`, `../docs/phase-4-plan.md` — the most recent phases'
+  scoping and design decisions.

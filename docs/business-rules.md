@@ -1,7 +1,7 @@
 # Business Rules — Smart Inventory Manager
 
 Status: Phase 0 — Product & Business Analysis
-Last updated: 2026-08-19
+Last updated: 2026-08-20
 
 Each rule is marked **[Confirmed]** (directly follows from the project concept) or
 **[Assumption]** (a reasonable default that should be validated during UI review). See
@@ -79,6 +79,14 @@ involved.
 - **BR-051** [Confirmed] — **Immutability.** Recorded transactions cannot be edited or
   deleted. Corrections are made by recording a new adjustment transaction, never by altering
   history. → FR-022, FR-030
+- **BR-052** [Confirmed, documented 2026-08-20, Phase 4 review] — **Date cannot be in the
+  future.** A transaction's `occurredAt` date cannot be later than today. This applies
+  identically to stock-in, stock-out, and adjustment — it's a property of recording history
+  at all, not something specific to any one transaction type, so it lives here rather than
+  duplicated under each type's own section. Enforced by
+  `InventoryService.assertNotFuture`, called from all three write paths; this rule was
+  already implemented before this entry was written — see phase-4-plan.md §0/§4. → FR-020,
+  FR-021, FR-022
 
 ## Low Stock
 

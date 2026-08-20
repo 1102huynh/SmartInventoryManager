@@ -121,9 +121,14 @@ be confirmed before or during UI mockup review.
 - **A-3**: Stock quantities are whole units (integers). No fractional or weight-based
   inventory (e.g., kilograms, liters) in MVP.
 - **A-4**: Each product has a single unit of measurement; unit conversion is out of scope.
-- **A-5**: Users authenticate individually so transactions can be attributed to a user, but
-  fine-grained role-based permissions are deferred; MVP assumes all authenticated users can
-  perform inventory operations.
+- **A-5** [Updated 2026-08-20, Phase 5]: Users authenticate individually so transactions can
+  be attributed to a user (Phase 3), and as of Phase 5 the system enforces the two roles
+  named in §3 — Owner can create/edit/deactivate/delete Products, Suppliers, and Categories;
+  Staff can perform every inventory operation (stock-in, stock-out, adjustment) and every
+  read, the same as Owner. Still deferred: per-permission granularity beyond the two-role
+  split, and user management (no `PATCH /users/:id/role`, no admin screen — roles are set
+  directly in the database, same as users themselves). See BR-070–073 and
+  `docs/phase-5-plan.md`.
 - **A-6**: No batch, lot, or expiry-date tracking in MVP.
 - **A-7**: Product categories are a light organizational aid (Should Have), not required for
   MVP correctness.
@@ -152,8 +157,10 @@ These affect the UI mockup and should be resolved before or during that phase.
 - **Q-7**: Multi-location support — confirmed out of MVP, but is it a near-term Future item
   the mockup should visually anticipate (e.g., a location field reserved for later), or
   fully ignored for now?
-- **Q-8**: What user roles exist, even informally (e.g., Owner vs. Staff), and do they need
-  to behave differently anywhere in the UI for Phase 0/1 purposes?
+- **Q-8 [Resolved 2026-08-20, Phase 5]**: Two roles, Owner and Staff — the two named in §3
+  (business owner/manager, stock/inventory staff). They now behave differently server-side,
+  not just informally: Owner-only for Product/Supplier/Category writes, both roles for
+  everything else (BR-070–073). See `docs/phase-5-plan.md`.
 
 ## 11. Cross-References
 

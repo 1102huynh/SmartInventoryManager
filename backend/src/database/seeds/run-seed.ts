@@ -3,6 +3,7 @@ import * as bcrypt from 'bcrypt';
 import { Category } from '../../categories/category.entity';
 import { EntityStatus } from '../../common/enums/entity-status.enum';
 import { TransactionType } from '../../common/enums/transaction-type.enum';
+import { UserRole } from '../../common/enums/user-role.enum';
 import { InventoryTransaction } from '../../inventory/inventory-transaction.entity';
 import { Product } from '../../products/product.entity';
 import { Supplier } from '../../suppliers/supplier.entity';
@@ -33,9 +34,9 @@ const CATEGORY_NAMES = [
 const DEV_PASSWORD = 'password123';
 
 const USERS = [
-  { name: 'Jordan Lee', role: 'Staff', email: 'jordan@example.com' },
-  { name: 'Alex Rivera', role: 'Owner', email: 'alex@example.com' },
-  { name: 'Sam Patel', role: 'Staff', email: 'sam@example.com' },
+  { name: 'Jordan Lee', role: UserRole.Staff, email: 'jordan@example.com' },
+  { name: 'Alex Rivera', role: UserRole.Owner, email: 'alex@example.com' },
+  { name: 'Sam Patel', role: UserRole.Staff, email: 'sam@example.com' },
 ];
 
 const SUPPLIERS = [

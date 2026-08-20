@@ -8,12 +8,17 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { Roles } from '../common/decorators/roles.decorator';
+import { UserRole } from '../common/enums/user-role.enum';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { QuerySuppliersDto } from './dto/query-suppliers.dto';
 import { SetSupplierStatusDto } from './dto/set-supplier-status.dto';
 import { UpdateSupplierDto } from './dto/update-supplier.dto';
 import { SuppliersService } from './suppliers.service';
 
+// @Roles(UserRole.Owner) below is applied per-route, not per-controller — see
+// products.controller.ts for the same reasoning; this controller's GET routes stay
+// open to any authenticated user.
 @Controller('suppliers')
 export class SuppliersController {
   constructor(private readonly suppliersService: SuppliersService) {}
@@ -32,11 +37,13 @@ export class SuppliersController {
     return this.suppliersService.findOne(id);
   }
 
+  @Roles(UserRole.Owner)
   @Post()
   create(@Body() dto: CreateSupplierDto) {
     return this.suppliersService.create(dto);
   }
 
+  @Roles(UserRole.Owner)
   @Patch(':id')
   update(
     @Param('id', ParseIntPipe) id: number,
@@ -45,6 +52,7 @@ export class SuppliersController {
     return this.suppliersService.update(id, dto);
   }
 
+  @Roles(UserRole.Owner)
   @Patch(':id/status')
   setStatus(
     @Param('id', ParseIntPipe) id: number,

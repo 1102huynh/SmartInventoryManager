@@ -3,11 +3,12 @@ import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
 import { Repository } from 'typeorm';
+import { UserRole } from '../common/enums/user-role.enum';
 import { User } from '../users/user.entity';
 
 export interface LoginResult {
   accessToken: string;
-  user: { id: number; name: string; role: string };
+  user: { id: number; name: string; role: UserRole };
 }
 
 @Injectable()

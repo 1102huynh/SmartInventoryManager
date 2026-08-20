@@ -1,0 +1,227 @@
+// Must run before any other import pulls in ConfigModule — see app.e2e-spec.ts for
+// why this has to be the very first thing in the file.
+process.env.DB_DATABASE = 'smart_inventory_e2e';
+
+import {
+  ClassSerializerInterceptor,
+  INestApplication,
+  ValidationPipe,
+} from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { JwtService } from '@nestjs/jwt';
+import { Test } from '@nestjs/testing';
+import * as bcrypt from 'bcrypt';
+import { DataSource } from 'typeorm';
+import request from 'supertest';
+import { AppModule } from '../src/app.module';
+import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
+
+// Phase 5 (docs/phase-5-plan.md §5): proves the Owner/Staff split end to end, over
+// real HTTP, against a real database — the one thing roles.guard.spec.ts (mocked
+// Reflector/ExecutionContext) and jwt.strategy.spec.ts (mocked UsersService) can't:
+// that the two guards, the strategy's DB lookup, and the ten @Roles(UserRole.Owner)
+// routes actually compose into the behavior the plan describes.
+const PASSWORD = 'e2e-test-password';
+
+describe('Roles / authorization (e2e)', () => {
+  let app: INestApplication;
+  let dataSource: DataSource;
+  let jwtService: JwtService;
+  let ownerToken: string;
+  let staffToken: string;
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+    app = moduleRef.createNestApplication();
+    // Mirrors main.ts exactly — see app.e2e-spec.ts.
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
+    app.useGlobalFilters(new AllExceptionsFilter());
+    app.useGlobalInterceptors(
+      new ClassSerializerInterceptor(app.get(Reflector)),
+    );
+    await app.init();
+    dataSource = moduleRef.get(DataSource);
+    jwtService = moduleRef.get(JwtService);
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(async () => {
+    await dataSource.query(
+      'TRUNCATE TABLE inventory_transactions, products, suppliers, users, categories RESTART IDENTITY CASCADE',
+    );
+    const passwordHash = await bcrypt.hash(PASSWORD, 10);
+    await dataSource.query(
+      `INSERT INTO users (name, role, email, password_hash) VALUES
+        ('Owner User', 'owner', 'owner@example.com', $1),
+        ('Staff User', 'staff', 'staff@example.com', $1)`,
+      [passwordHash],
+    );
+
+    const ownerLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: 'owner@example.com', password: PASSWORD });
+    ownerToken = ownerLogin.body.accessToken;
+
+    const staffLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: 'staff@example.com', password: PASSWORD });
+    staffToken = staffLogin.body.accessToken;
+  });
+
+  function asOwner(req: request.Test): request.Test {
+    return req.set('Authorization', `Bearer ${ownerToken}`);
+  }
+  function asStaff(req: request.Test): request.Test {
+    return req.set('Authorization', `Bearer ${staffToken}`);
+  }
+
+  it('rejects Staff creating a product with 403, and allows Owner with 201', async () => {
+    const staffAttempt = await asStaff(
+      request(app.getHttpServer()).post('/products'),
+    ).send({ name: 'Widget', sku: 'W-1', unit: 'each' });
+    expect(staffAttempt.status).toBe(403);
+
+    const ownerAttempt = await asOwner(
+      request(app.getHttpServer()).post('/products'),
+    ).send({ name: 'Widget', sku: 'W-1', unit: 'each' });
+    expect(ownerAttempt.status).toBe(201);
+  });
+
+  it('rejects Staff setting a product status with 403, and allows Owner with 200', async () => {
+    const product = await asOwner(
+      request(app.getHttpServer()).post('/products'),
+    ).send({ name: 'Widget', sku: 'W-1', unit: 'each' });
+    const id = product.body.id;
+
+    const staffAttempt = await asStaff(
+      request(app.getHttpServer()).patch(`/products/${id}/status`),
+    ).send({ status: 'inactive' });
+    expect(staffAttempt.status).toBe(403);
+
+    const ownerAttempt = await asOwner(
+      request(app.getHttpServer()).patch(`/products/${id}/status`),
+    ).send({ status: 'inactive' });
+    expect(ownerAttempt.status).toBe(200);
+  });
+
+  it('rejects Staff deleting a product with 403, and allows Owner with 204', async () => {
+    const product = await asOwner(
+      request(app.getHttpServer()).post('/products'),
+    ).send({ name: 'Widget', sku: 'W-1', unit: 'each' });
+    const id = product.body.id;
+
+    const staffAttempt = await asStaff(
+      request(app.getHttpServer()).delete(`/products/${id}`),
+    );
+    expect(staffAttempt.status).toBe(403);
+
+    const ownerAttempt = await asOwner(
+      request(app.getHttpServer()).delete(`/products/${id}`),
+    );
+    expect(ownerAttempt.status).toBe(204);
+  });
+
+  it('rejects Staff creating a supplier with 403, and allows Owner with 201', async () => {
+    const staffAttempt = await asStaff(
+      request(app.getHttpServer()).post('/suppliers'),
+    ).send({ name: 'Acme Supplies' });
+    expect(staffAttempt.status).toBe(403);
+
+    const ownerAttempt = await asOwner(
+      request(app.getHttpServer()).post('/suppliers'),
+    ).send({ name: 'Acme Supplies' });
+    expect(ownerAttempt.status).toBe(201);
+  });
+
+  it('rejects Staff setting a supplier status with 403, and allows Owner with 200', async () => {
+    const supplier = await asOwner(
+      request(app.getHttpServer()).post('/suppliers'),
+    ).send({ name: 'Acme Supplies' });
+    const id = supplier.body.id;
+
+    const staffAttempt = await asStaff(
+      request(app.getHttpServer()).patch(`/suppliers/${id}/status`),
+    ).send({ status: 'inactive' });
+    expect(staffAttempt.status).toBe(403);
+
+    const ownerAttempt = await asOwner(
+      request(app.getHttpServer()).patch(`/suppliers/${id}/status`),
+    ).send({ status: 'inactive' });
+    expect(ownerAttempt.status).toBe(200);
+  });
+
+  it('rejects Staff creating a category with 403, and allows Owner with 201', async () => {
+    const staffAttempt = await asStaff(
+      request(app.getHttpServer()).post('/categories'),
+    ).send({ name: 'Beverages' });
+    expect(staffAttempt.status).toBe(403);
+
+    const ownerAttempt = await asOwner(
+      request(app.getHttpServer()).post('/categories'),
+    ).send({ name: 'Beverages' });
+    expect(ownerAttempt.status).toBe(201);
+  });
+
+  // The most important test in this file: it proves the phase didn't over-lock the
+  // system and break the exact workflow the product exists for. A regression here
+  // would be worse than a missing 403 — see docs/phase-5-plan.md §5.
+  it('allows Staff to record a stock-out', async () => {
+    const product = await asOwner(
+      request(app.getHttpServer()).post('/products'),
+    ).send({ name: 'Widget', sku: 'W-1', unit: 'each' });
+    const id = product.body.id;
+    await asOwner(request(app.getHttpServer()).post(`/products/${id}/stock-in`)).send(
+      { quantity: 10, occurredAt: '2026-08-01' },
+    );
+
+    const res = await asStaff(
+      request(app.getHttpServer()).post(`/products/${id}/stock-out`),
+    ).send({ quantity: 3, occurredAt: '2026-08-02' });
+    expect(res.status).toBe(201);
+  });
+
+  it('allows Staff to read products and the dashboard summary', async () => {
+    const products = await asStaff(request(app.getHttpServer()).get('/products'));
+    expect(products.status).toBe(200);
+
+    const dashboard = await asStaff(
+      request(app.getHttpServer()).get('/dashboard/summary'),
+    );
+    expect(dashboard.status).toBe(200);
+  });
+
+  it('a 403 response body carries the Owner-role message, not a generic "Forbidden resource"', async () => {
+    const res = await asStaff(request(app.getHttpServer()).post('/products')).send({
+      name: 'Widget',
+      sku: 'W-1',
+      unit: 'each',
+    });
+    expect(res.status).toBe(403);
+    expect(res.body.message).toBe('This action requires the Owner role.');
+  });
+
+  it('rejects a valid, unexpired token whose user row has been deleted, with 401', async () => {
+    const staffRow = await dataSource.query(
+      `SELECT id FROM users WHERE email = 'staff@example.com'`,
+    );
+    const staffId: number = staffRow[0].id;
+    const orphanToken = jwtService.sign({ sub: staffId });
+    await dataSource.query('DELETE FROM users WHERE id = $1', [staffId]);
+
+    const res = await request(app.getHttpServer())
+      .get('/auth/me')
+      .set('Authorization', `Bearer ${orphanToken}`);
+    expect(res.status).toBe(401);
+  });
+});

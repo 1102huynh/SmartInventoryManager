@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { EntityStatus } from '../common/enums/entity-status.enum';
+import { UserRole } from '../common/enums/user-role.enum';
 import { createTestDataSource } from '../database/test-data-source';
 import { Product } from '../products/product.entity';
 import { User } from '../users/user.entity';
@@ -45,7 +46,7 @@ describe('InventoryService (integration)', () => {
     );
     const user = await dataSource.getRepository(User).save({
       name: 'Test User',
-      role: 'Staff',
+      role: UserRole.Staff,
       email: 'test-user@example.com',
       // Not exercised by anything in this file (no login here — see auth.e2e-spec.ts
       // and auth.service.spec.ts for that) — the users.password_hash column is just

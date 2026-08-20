@@ -313,6 +313,15 @@ function todayInputValue(){
 let CATEGORIES = [];
 let CURRENT_USER = null; // { id, name, role } — set by Store.login(), cleared by Store.logout()
 
+// Phase 5 (docs/phase-5-plan.md §3): the one place the 'owner' string literal
+// appears. The server is the actual enforcement point (RolesGuard) — this only
+// decides what the UI offers, so a Staff user isn't shown a button that will 403.
+// CURRENT_USER is held in memory only (no localStorage, per Phase 3), so this can
+// never read a stale role left over from a previous session.
+const Auth = {
+  isOwner(){ return !!CURRENT_USER && CURRENT_USER.role === 'owner'; },
+};
+
 // Phase 3 (docs/phase-3-plan.md "Token transport"): held in a plain JS variable, not
 // localStorage — matching how the rest of Store already avoids persisting anything
 // client-side. The one consequence worth stating plainly: a page refresh loses this
@@ -376,6 +385,12 @@ const Store = {
       CURRENT_USER = null;
       if (location.hash !== '#/login') UI.navigate('#/login'); else renderApp();
     }
+    // A 403 (RolesGuard, Phase 5) is deliberately NOT handled here the way 401 is —
+    // the session is fine, the signed-in user just isn't allowed to do this one
+    // thing. It falls through to the generic throw below, which the forms/wizards
+    // already surface as an inline/toast error. Do not fold this into the 401
+    // branch above: that would log a Staff user out for clicking something they
+    // merely can't do.
     if (!res.ok){
       const message = data && (Array.isArray(data.message) ? data.message.join(' ') : data.message);
       throw new Error(message || `Request failed (${res.status}).`);
@@ -666,6 +681,11 @@ const UI = {
 // sidebar badge on every single navigation — not worth it for what those counts add;
 // the Dashboard's stat tiles already own that job properly (one real fetch, on the
 // one screen where "totals" is the point). So the shell drops them here.
+// The stored role ('owner'/'staff', Phase 5) stops being the display value once it's
+// a lowercase enum on the wire — this is the one place that gets translated back for
+// display.
+const ROLE_LABEL = { owner: 'Owner', staff: 'Staff' };
+
 function shellTemplate(section){
   const navItem = (key, hash, label, icon) => `
     <a class="nav-item${section===key?' active':''}" href="${hash}">
@@ -694,7 +714,7 @@ function shellTemplate(section){
         <div class="topbar-title" id="topbar-title">Smart Inventory Manager</div>
         <div class="user-chip">
           <div class="user-avatar">${UI.esc(user.initials || user.name.slice(0,2).toUpperCase())}</div>
-          <div class="user-meta"><div class="name">${UI.esc(user.name)}</div><div class="role">${UI.esc(user.role)}</div></div>
+          <div class="user-meta"><div class="name">${UI.esc(user.name)}</div><div class="role">${UI.esc(ROLE_LABEL[user.role] || user.role)}</div></div>
           <button class="btn btn-ghost btn-sm" id="logout-btn" type="button">Sign out</button>
         </div>
       </header>
@@ -729,6 +749,22 @@ function renderApp(){
     return;
   }
   const { parts, query } = parseHash();
+
+  // Phase 5 (docs/phase-5-plan.md §3 "One route guard, not one per view"): the same
+  // single-gate pattern as the ACCESS_TOKEN check above, applied to the small set of
+  // owner-only routes, for a Staff user who arrives by typed URL or stale bookmark —
+  // the server (RolesGuard) would 403 these anyway; this just avoids showing a form
+  // that can only fail. Server-side is still the actual enforcement point.
+  const isOwnerOnlyRoute =
+    (parts[0] === 'products' && (parts[1] === 'new' || parts[2] === 'edit')) ||
+    (parts[0] === 'suppliers' && (parts[1] === 'new' || parts[2] === 'edit')) ||
+    parts[0] === 'categories';
+  if (isOwnerOnlyRoute && !Auth.isOwner()){
+    UI.toast("You don't have permission to view that page.", 'error');
+    location.hash = '#/dashboard';
+    return;
+  }
+
   const section = parts[0] || 'dashboard';
   root.innerHTML = shellTemplate(section);
   document.getElementById('logout-btn').addEventListener('click', () => Store.logout());
@@ -998,7 +1034,7 @@ Views.productList = function(container, query){
     // isn't worth it — so the subtitle becomes static copy instead.
     return `<div class="content-header">
       <div><h1>Products</h1><div class="sub">Your full product catalog.</div></div>
-      <div class="header-actions"><a class="btn btn-primary" href="#/products/new">${UI.icon('plus')} New Product</a></div>
+      <div class="header-actions">${Auth.isOwner() ? `<a class="btn btn-primary" href="#/products/new">${UI.icon('plus')} New Product</a>` : ''}</div>
     </div>`;
   }
 
@@ -1013,7 +1049,7 @@ Views.productList = function(container, query){
         <option value="">All categories</option>
         ${CATEGORIES.map(c => `<option value="${c.id}" ${c.id===category?'selected':''}>${UI.esc(c.name)}</option>`).join('')}
       </select>
-      <a class="btn btn-ghost btn-sm" href="#/categories">Manage categories</a>
+      ${Auth.isOwner() ? '<a class="btn btn-ghost btn-sm" href="#/categories">Manage categories</a>' : ''}
       ${UI.previewControl(override)}
     </div>`;
   }
@@ -1099,7 +1135,7 @@ Views.productDetail = function(container, id){
             <div><span class="k">Category</span>${cat ? UI.esc(cat.name) : '—'}</div>
           </div>
         </div>
-        <div class="header-actions"><a class="btn btn-secondary" href="#/products/${product.id}/edit">Edit</a></div>
+        <div class="header-actions">${Auth.isOwner() ? `<a class="btn btn-secondary" href="#/products/${product.id}/edit">Edit</a>` : ''}</div>
       </div>
 
       ${inactive ? `<div class="inline-notice warn" style="margin-bottom:20px">${UI.icon('warning')}<div>This product is <strong>inactive</strong>. Reactivate it to record stock-in or stock-out — adjustments are still allowed (e.g. to finalize a closing count).</div></div>` : ''}
@@ -1109,7 +1145,7 @@ Views.productDetail = function(container, id){
         <a class="btn btn-secondary" ${inactive ? 'aria-disabled="true" tabindex="-1" style="pointer-events:none;opacity:.5"' : `href="#/products/${product.id}/stock-out"`}>Stock Out</a>
         <a class="btn btn-secondary" href="#/products/${product.id}/adjust">Adjust Stock</a>
         <span style="flex:1"></span>
-        ${lifecycleControls(inactive)}
+        ${Auth.isOwner() ? lifecycleControls(inactive) : ''}
       </div>
 
       <h2 class="section-title">Transaction History</h2>
@@ -1690,7 +1726,7 @@ Views.supplierList = function(container, query){
   function header(){
     return `<div class="content-header">
       <div><h1>Suppliers</h1><div class="sub">Every supplier on file.</div></div>
-      <div class="header-actions"><a class="btn btn-primary" href="#/suppliers/new">${UI.icon('plus')} New Supplier</a></div>
+      <div class="header-actions">${Auth.isOwner() ? `<a class="btn btn-primary" href="#/suppliers/new">${UI.icon('plus')} New Supplier</a>` : ''}</div>
     </div>`;
   }
   function toolbar(){
@@ -1754,10 +1790,10 @@ Views.supplierDetail = function(container, id){
             <div><span class="k">Phone</span>${UI.esc(supplier.phone || '—')}</div>
           </div>
         </div>
-        <div class="header-actions"><a class="btn btn-secondary" href="#/suppliers/${supplier.id}/edit">Edit</a></div>
+        <div class="header-actions">${Auth.isOwner() ? `<a class="btn btn-secondary" href="#/suppliers/${supplier.id}/edit">Edit</a>` : ''}</div>
       </div>
       <div class="action-row">
-        ${confirmMode === 'toggle' ? `<div class="confirm-inline">${supplier.status==='active' ? 'Deactivate' : 'Reactivate'} ${UI.esc(supplier.name)}?
+        ${!Auth.isOwner() ? '' : confirmMode === 'toggle' ? `<div class="confirm-inline">${supplier.status==='active' ? 'Deactivate' : 'Reactivate'} ${UI.esc(supplier.name)}?
             <button class="btn btn-ghost btn-sm" id="cancel-confirm">Cancel</button>
             <button class="btn btn-danger btn-sm" id="do-toggle">Confirm</button></div>`
           : `<button class="btn btn-secondary" id="btn-toggle">${supplier.status==='active' ? 'Deactivate' : 'Reactivate'}</button>`}

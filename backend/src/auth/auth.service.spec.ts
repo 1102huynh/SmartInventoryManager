@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
+import { UserRole } from '../common/enums/user-role.enum';
 import { User } from '../users/user.entity';
 import { AuthService } from './auth.service';
 
@@ -19,7 +20,7 @@ describe('AuthService', () => {
   const user: User = {
     id: 1,
     name: 'Jordan Lee',
-    role: 'Staff',
+    role: UserRole.Staff,
     email: 'jordan@example.com',
     passwordHash,
   };

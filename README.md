@@ -43,9 +43,14 @@ password:
 
 | Email | Password | Role |
 |---|---|---|
-| `jordan@example.com` | `password123` | Staff |
-| `alex@example.com` | `password123` | Owner |
-| `sam@example.com` | `password123` | Staff |
+| `jordan@example.com` | `password123` | staff |
+| `alex@example.com` | `password123` | owner |
+| `sam@example.com` | `password123` | staff |
+
+Only `alex@example.com` (Owner) can create/edit/deactivate/delete products,
+suppliers, and categories (`docs/phase-5-plan.md`) — signing in as Jordan or Sam
+(Staff) hides those actions in the UI, so seeing fewer buttons than Alex sees is
+expected, not a bug. Both roles can record stock-in, stock-out, and adjustments.
 
 **3. Start the frontend:**
 

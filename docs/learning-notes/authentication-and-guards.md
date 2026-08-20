@@ -89,10 +89,15 @@ token out of the `Authorization` header and verifying its signature and expiry, 
 its own. The one method application code actually has to write is `validate()`:
 
 ```ts
-validate(payload: { sub: number }): { id: number } {
-  return { id: payload.sub };
+async validate(payload: { sub: number }): Promise<{ id: number; role: UserRole }> {
+  const user = await this.usersService.findOne(payload.sub);
+  return { id: user.id, role: user.role };
 }
 ```
+
+(Phase 5 added the lookup and the `role` field — see "Authorization" below. Before
+that, `validate()` just returned `{ id: payload.sub }` synchronously, no database
+access at all.)
 
 `validate()` only runs *after* the token has already checked out — a request with a
 missing, malformed, tampered, or expired token never reaches it; Passport rejects it
@@ -124,6 +129,80 @@ exists as its own function instead of "decrypt, then `===`": decrypt-and-compare
 require encryption (reversible, and therefore a much bigger liability if the database
 ever leaks), when one-way hashing is both simpler and safer for this exact problem.
 
+### Authorization is a different question than authentication
+
+Everything above answers *who is this?* — a Guard (`JwtAuthGuard`) and a Strategy
+(`JwtStrategy`) that turn a bearer token into a trustworthy `request.user`.
+Phase 5 (`docs/phase-5-plan.md`) adds a second, genuinely different question on top:
+*is this **specific, already-identified** user allowed to do **this**?* That's
+**authorization**, and it gets its own Guard, `RolesGuard`
+(`backend/src/auth/roles.guard.ts`), rather than being folded into `JwtAuthGuard`.
+Keeping them separate isn't just tidiness — a request that fails authentication and a
+request that fails authorization are different failures with different HTTP codes
+(`401` vs. `403`) and different fixes for the caller (log in again, vs. nothing you can
+do without a different role), so conflating them into one Guard would blur that
+distinction in the response itself.
+
+**Multiple `APP_GUARD` providers.** `auth.module.ts` now registers *two* guards this
+way:
+
+```ts
+providers: [
+  // ...
+  { provide: APP_GUARD, useClass: JwtAuthGuard },
+  { provide: APP_GUARD, useClass: RolesGuard },
+]
+```
+
+`APP_GUARD` isn't a single-slot token — registering it twice adds a second global
+guard rather than replacing the first. Nest runs every registered guard for every
+request, **in the order their providers were registered**, and a request must pass
+*all* of them to reach its handler.
+
+**Why registration order is load-bearing here.** `RolesGuard.canActivate` reads
+`request.user.role` — but that property doesn't exist until `JwtAuthGuard`'s Passport
+strategy has already run and populated it (see "Passport strategies" above). If
+`RolesGuard` were registered *before* `JwtAuthGuard`, it would run first, find no
+`request.user` on every single request (even ones with a perfectly valid token, since
+its Guard hasn't run yet), and deny everything. This is exactly the kind of dependency
+that's invisible from reading either Guard's code in isolation — nothing about
+`RolesGuard.canActivate` signals "I need to run second." The comment at the
+registration site in `auth.module.ts` is the only thing that makes it visible, which is
+why it's there.
+
+**`@Roles()` is default-open; the absence of `@Public()` is default-closed — and
+that's intentional, not inconsistent.** `@Public()` marks the *rare* exception (one
+route, `POST /auth/login`) against a *strict* default (every route needs a token) — so
+the default has to be closed, or a route added later without thinking about auth would
+silently be reachable with no token at all. `@Roles(UserRole.Owner)` marks the *rare*
+restriction (ten specific write routes) against a *permissive* default (any
+authenticated user can do most things) — so the default has to be open, for the mirror
+image reason: a route added later without thinking about roles should behave like its
+neighbors (open to any signed-in user), not fail closed with a confusing `403` nobody
+asked for. Same mechanism (`SetMetadata` + `Reflector`, see above), opposite default,
+because the two decorators are guarding opposite-shaped rules.
+
+```ts
+canActivate(context: ExecutionContext): boolean {
+  const required = this.reflector.getAllAndOverride<UserRole[]>(ROLES_KEY, [
+    context.getHandler(),
+    context.getClass(),
+  ]);
+  if (!required || required.length === 0) return true; // no @Roles() → open
+  const { user } = context.switchToHttp().getRequest();
+  if (!user) return false; // belt-and-braces; JwtAuthGuard already ran
+  if (required.includes(user.role)) return true;
+  throw new ForbiddenException('This action requires the Owner role.');
+}
+```
+
+Throwing `ForbiddenException` instead of just returning `false` matters for the same
+reason `AuthController.login` throws a specific message rather than letting Nest's
+generic default through: Nest turns a bare `false` into a generic "Forbidden resource"
+message, which tells a legitimately confused Staff user nothing about *why*. The
+explicit exception carries a message that says why, and `AllExceptionsFilter` passes
+it through unchanged.
+
 ## Example
 
 `auth.service.spec.ts` proves the hash comparison with a *real* `bcrypt.hashSync()`
@@ -151,6 +230,14 @@ succeeds.
   slow (it's a key-derivation-style hash, tuned by its cost factor) specifically to
   make brute-forcing many guesses expensive; that's a feature of hashing, not a sign
   something is being (mis)used as encryption.
+- Registering `RolesGuard` before `JwtAuthGuard` in the `APP_GUARD` providers array —
+  it would run first, see no `request.user` yet, and deny every request regardless of
+  token validity. Order in that array is the order Nest runs global guards in.
+- Putting the role in a JWT's payload and skipping the database lookup, to save a query —
+  cheaper, but means a demoted user keeps their old role's powers until their token
+  expires, since nothing forces re-issuing a token on a role change. This project reads
+  `role` fresh from the database on every request specifically to avoid that (see
+  `JwtStrategy.validate`).
 
 ## Key Takeaways
 
@@ -164,3 +251,12 @@ succeeds.
   project actually writes; everything about verifying the token itself is handled by
   the library.
 - Hash passwords, never encrypt them — `bcrypt.compare()`, not decrypt-and-compare.
+- Authentication (*who is this?*) and authorization (*what can they do?*) are
+  different questions, get different Guards, and fail with different codes (`401` vs.
+  `403`) — don't fold one into the other.
+- Multiple `APP_GUARD` providers all run, in registration order, and a request must
+  pass every one of them — order the array so guards that populate `request.user` run
+  before guards that read it.
+- A permissive default (`@Roles()` open, like most of this app's routes) and a strict
+  default (`@Public()` closed, like `JwtAuthGuard`'s) can coexist deliberately — pick
+  the default that matches which case is the *exception* for that particular rule.

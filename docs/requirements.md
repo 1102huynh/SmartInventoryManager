@@ -11,21 +11,21 @@ must satisfy.
 
 | ID | Name | Description | Priority | Notes / Assumptions |
 |---|---|---|---|---|
-| FR-001 | Create product | User can create a product with a name, unique identifier (SKU), and unit of measurement. | Must | See BR-001, BR-003 |
-| FR-002 | Edit product | User can edit a product's editable details (name, threshold, category, etc.). SKU identity should not be freely changeable once transactions exist. | Must | See BR-001 |
-| FR-003 | Activate / deactivate product | User can mark a product Active or Inactive. Inactive products are excluded from new stock-in/out transactions. | Must | See BR-002 |
+| FR-001 | Create product | User can create a product with a name, unique identifier (SKU), and unit of measurement. | Must | See BR-001, BR-003. **Owner only** (Phase 5, FR-062). |
+| FR-002 | Edit product | User can edit a product's editable details (name, threshold, category, etc.). SKU identity should not be freely changeable once transactions exist. | Must | See BR-001. **Owner only** (Phase 5, FR-062). |
+| FR-003 | Activate / deactivate product | User can mark a product Active or Inactive. Inactive products are excluded from new stock-in/out transactions. | Must | See BR-002. **Owner only** (Phase 5, FR-062). |
 | FR-004 | View product list & detail | User can view all products with current stock and status, and drill into a single product's detail. | Must | Detail view links to FR-030 (history) |
-| FR-005 | Categorize product | User can optionally assign a product to a category for organization/filtering. | Should | **Done** (Phase 4) — full Category CRUD (`POST`/`PATCH`/`DELETE /categories`). Q-5 resolved: flat, no hierarchy — see `docs/phase-4-plan.md` §1. |
-| FR-006 | Prevent product deletion with history | Products that have transaction history cannot be hard-deleted, only deactivated. | Must | See BR-004 |
+| FR-005 | Categorize product | User can optionally assign a product to a category for organization/filtering. | Should | **Done** (Phase 4) — full Category CRUD (`POST`/`PATCH`/`DELETE /categories`). Q-5 resolved: flat, no hierarchy — see `docs/phase-4-plan.md` §1. **Owner only** (Phase 5, FR-062). |
+| FR-006 | Prevent product deletion with history | Products that have transaction history cannot be hard-deleted, only deactivated. | Must | See BR-004. **Owner only** (Phase 5, FR-062). |
 
 ## Supplier Management
 
 | ID | Name | Description | Priority | Notes / Assumptions |
 |---|---|---|---|---|
-| FR-010 | Create supplier | User can create a supplier with a name and contact information. | Should | |
-| FR-011 | Edit supplier | User can edit supplier details. | Should | |
+| FR-010 | Create supplier | User can create a supplier with a name and contact information. | Should | **Owner only** (Phase 5, FR-062). |
+| FR-011 | Edit supplier | User can edit supplier details. | Should | **Owner only** (Phase 5, FR-062). |
 | FR-012 | View supplier list & detail | User can view all suppliers and see stock-in history associated with a supplier. | Should | |
-| FR-013 | Activate / deactivate supplier | User can mark a supplier Active or Inactive; inactive suppliers cannot be selected for new stock-in. | Should | Mirrors FR-003 |
+| FR-013 | Activate / deactivate supplier | User can mark a supplier Active or Inactive; inactive suppliers cannot be selected for new stock-in. | Should | Mirrors FR-003. **Owner only** (Phase 5, FR-062). |
 
 ## Inventory Management — Stock In
 
@@ -77,8 +77,9 @@ must satisfy.
 
 | ID | Name | Description | Priority | Notes / Assumptions |
 |---|---|---|---|---|
-| FR-060 | User login | A user must authenticate to use the system. | Must | **Done** (Phase 3) — JWT login (`POST /auth/login`), every write behind a global guard. RBAC still deferred (A-5). See `docs/phase-3-plan.md`. |
+| FR-060 | User login | A user must authenticate to use the system. | Must | **Done** (Phase 3) — JWT login (`POST /auth/login`), every write behind a global guard. RBAC done in Phase 5 — see FR-062. |
 | FR-061 | Attribute transactions to user | Every stock-in, stock-out, and adjustment records which user performed it. | Must | Supports auditability, BR-050 |
+| FR-062 | Role-based authorization | A user is either Owner or Staff (BR-070). Creating, editing, deactivating, or deleting a Product, Supplier, or Category requires the Owner role; every read and every stock-in/out/adjustment is available to both roles. | Must | **Done** (Phase 5) — `RolesGuard` + `@Roles()`, enforced server-side; the frontend hides actions a Staff user can't perform. See BR-070–073 and `docs/phase-5-plan.md`. |
 
 ## Cross-Reference Summary
 

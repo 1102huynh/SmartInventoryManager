@@ -57,8 +57,10 @@ describe('Categories (e2e)', () => {
       'TRUNCATE TABLE inventory_transactions, products, suppliers, users, categories RESTART IDENTITY CASCADE',
     );
     const passwordHash = await bcrypt.hash(TEST_PASSWORD, 10);
+    // Phase 5 (docs/phase-5-plan.md §5): this file drives category/product writes,
+    // which are now Owner-only — 'owner' rather than 'staff'.
     await dataSource.query(
-      `INSERT INTO users (name, role, email, password_hash) VALUES ('E2E User', 'Staff', 'e2e-user@example.com', $1)`,
+      `INSERT INTO users (name, role, email, password_hash) VALUES ('E2E User', 'owner', 'e2e-user@example.com', $1)`,
       [passwordHash],
     );
     const login = await request(app.getHttpServer())

@@ -54,8 +54,11 @@ describe('Auth (e2e)', () => {
       'TRUNCATE TABLE inventory_transactions, products, suppliers, users, categories RESTART IDENTITY CASCADE',
     );
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
+    // This file only exercises /auth/login and /auth/me, never a write — so unlike
+    // app.e2e-spec.ts/categories.e2e-spec.ts, it only needs the lowercase value, not
+    // a promotion to Owner (docs/phase-5-plan.md §5).
     await dataSource.query(
-      `INSERT INTO users (name, role, email, password_hash) VALUES ('Auth Test User', 'Staff', 'auth-test@example.com', $1)`,
+      `INSERT INTO users (name, role, email, password_hash) VALUES ('Auth Test User', 'staff', 'auth-test@example.com', $1)`,
       [passwordHash],
     );
   });
@@ -69,7 +72,7 @@ describe('Auth (e2e)', () => {
     expect(res.body.user).toEqual({
       id: expect.any(Number),
       name: 'Auth Test User',
-      role: 'Staff',
+      role: 'staff',
     });
   });
 
@@ -104,11 +107,15 @@ describe('Auth (e2e)', () => {
     const login = await request(app.getHttpServer())
       .post('/auth/login')
       .send({ email: 'auth-test@example.com', password: PASSWORD });
+    // GET /products rather than a write: this test is about the authentication
+    // boundary (a valid token gets past JwtAuthGuard), not authorization — a write
+    // would conflate it with RolesGuard, since this seeded user is Staff and most
+    // writes are now Owner-only (docs/phase-5-plan.md). See roles.e2e-spec.ts for the
+    // role-gated behavior itself.
     const res = await request(app.getHttpServer())
-      .post('/products')
-      .set('Authorization', `Bearer ${login.body.accessToken}`)
-      .send({ name: 'Widget', sku: 'W-1', unit: 'each' });
-    expect(res.status).toBe(201);
+      .get('/products')
+      .set('Authorization', `Bearer ${login.body.accessToken}`);
+    expect(res.status).toBe(200);
   });
 
   it('rejects a malformed token', async () => {

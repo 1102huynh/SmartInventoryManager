@@ -11,6 +11,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { JwtStrategy } from './jwt.strategy';
+import { RolesGuard } from './roles.guard';
 
 @Module({
   imports: [
@@ -44,6 +45,13 @@ import { JwtStrategy } from './jwt.strategy';
     // its own injected dependencies (JwtAuthGuard needs Reflector), because it's built
     // through the DI container like everything else here.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // Registered SECOND, deliberately after JwtAuthGuard: Nest runs global guards in
+    // the order their APP_GUARD providers are registered, and RolesGuard reads
+    // `request.user.role`, which only exists once JwtAuthGuard's Passport strategy has
+    // populated it. Swapping this order would make RolesGuard run before
+    // `request.user` exists, denying every request. See roles.guard.ts and
+    // docs/phase-5-plan.md §1 "RolesGuard is a second global guard".
+    { provide: APP_GUARD, useClass: RolesGuard },
   ],
 })
 export class AuthModule {}

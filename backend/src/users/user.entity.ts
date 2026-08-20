@@ -1,5 +1,6 @@
 import { Exclude } from 'class-transformer';
 import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { UserRole } from '../common/enums/user-role.enum';
 
 // Phase 2 kept this table deliberately minimal — see docs/backend-use-cases.md
 // "Deferred: Authentication" — just enough for every InventoryTransaction to point at
@@ -15,8 +16,8 @@ export class User {
   @Column()
   name: string;
 
-  @Column()
-  role: string;
+  @Column({ type: 'enum', enum: UserRole })
+  role: UserRole;
 
   @Column({ unique: true })
   email: string;

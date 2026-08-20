@@ -114,6 +114,24 @@ involved.
   → FR-050, FR-042, BR-060, BR-061. See `docs/api.md` (Dashboard) and
   `DashboardService.getSummary` for where this is implemented.
 
+## Authorization
+
+- **BR-070** [Decided 2026-08-20, Phase 5] — **Two roles.** Exactly two roles exist,
+  Owner and Staff (`users_role_enum`); every user has exactly one. No third role, no
+  per-permission table — see `docs/phase-5-plan.md` §1. → FR-062
+- **BR-071** [Decided 2026-08-20, Phase 5] — **Master data is Owner-only.** Creating,
+  editing, deactivating, or deleting a Product, Supplier, or Category requires the
+  Owner role. Enforced by `RolesGuard` on the ten routes listed in `docs/api.md`. →
+  FR-062, FR-001, FR-002, FR-003, FR-006, FR-010, FR-011, FR-013, FR-005
+- **BR-072** [Decided 2026-08-20, Phase 5] — **Stock movement is open to both roles.**
+  Recording a stock-in, stock-out, or adjustment requires only an authenticated user,
+  of either role. This is **not** a resolution of Q-6 (adjustment approval workflow,
+  product.md) — it is a role gate, not a workflow, and Q-6 remains open. → FR-062,
+  FR-020, FR-021, FR-022
+- **BR-073** [Decided 2026-08-20, Phase 5] — **Reads are open to both roles.** Every
+  read — products, suppliers, categories, transactions, dashboard, `/auth/me` — is
+  available to any authenticated user regardless of role. → FR-062
+
 ## Rules Explicitly Deferred (Future scope, not defined now)
 
 - Pricing/cost rules (cost of goods, valuation) — depends on product.md Q-1.

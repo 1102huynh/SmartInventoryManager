@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { AppConfig } from '../config/configuration';
+import { EntityStatus } from '../common/enums/entity-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
 import { UsersService } from '../users/users.service';
 
@@ -60,6 +61,17 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
     if (!user) {
       throw new UnauthorizedException('This account no longer exists.');
+    }
+    // Phase 6 (docs/phase-6-plan.md §1 "Deactivation is what token revocation turned
+    // out to be"): this lookup already runs on every authenticated request for the
+    // role-freshness reason above — adding a status check here costs nothing extra
+    // and is the one piece that makes deactivation take effect on the user's very
+    // next request instead of at their token's expiry up to 12 hours later. Same
+    // exception shape as the deleted-user case just above: from the caller's point of
+    // view "this token no longer identifies someone who may be here" is one category,
+    // whether the row is gone or merely deactivated.
+    if (user.status === EntityStatus.INACTIVE) {
+      throw new UnauthorizedException('This account has been deactivated.');
     }
     return { id: user.id, role: user.role };
   }

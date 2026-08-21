@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import * as bcrypt from 'bcrypt';
 import { Repository } from 'typeorm';
+import { EntityStatus } from '../common/enums/entity-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
+import { verifyPassword } from '../common/password';
 import { User } from '../users/user.entity';
 
 export interface LoginResult {
@@ -25,11 +26,26 @@ export class AuthService {
   // `null` on either an unknown email or a wrong password, deliberately the same
   // outcome for both — the controller turns that into one generic 401, so a caller
   // can't use this endpoint to enumerate which registered emails exist.
+  //
+  // Phase 6 (docs/phase-6-plan.md §1 "The login failure message for a deactivated
+  // account is deliberately *not* generic"): the status check below runs strictly
+  // AFTER verifyPassword has already succeeded — never before, never merged into the
+  // "no such user" branch. Reaching the deactivated-account message therefore requires
+  // already knowing the correct password, so it can't be used to probe which accounts
+  // exist any more than the generic 401 can; checking status first, cheaply, before
+  // the hash comparison would reopen exactly the enumeration hole Phase 3 closed. Do
+  // not "simplify" this by moving the check earlier.
   async validateUser(email: string, password: string): Promise<User | null> {
     const user = await this.usersRepository.findOne({ where: { email } });
     if (!user) return null;
-    const matches = await bcrypt.compare(password, user.passwordHash);
-    return matches ? user : null;
+    const matches = await verifyPassword(password, user.passwordHash);
+    if (!matches) return null;
+    if (user.status === EntityStatus.INACTIVE) {
+      throw new UnauthorizedException(
+        'This account has been deactivated. Ask an Owner to reactivate it.',
+      );
+    }
+    return user;
   }
 
   // Issues a single access token (no refresh token — see docs/phase-3-plan.md "Token:

@@ -1,27 +1,34 @@
+import { UnauthorizedException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
+import { EntityStatus } from '../common/enums/entity-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
+import { BCRYPT_ROUNDS } from '../common/password';
 import { User } from '../users/user.entity';
 import { AuthService } from './auth.service';
 
 // A unit test: mocked repository, no HTTP, no database — same style as
 // suppliers.service.spec.ts. bcrypt itself is NOT mocked (the hash below is a real
 // bcrypt.hashSync output, computed once at module load) — the whole point of this
-// service is the hash comparison, so faking bcrypt would test nothing.
+// service is the hash comparison, so faking bcrypt would test nothing. Uses
+// hashSync rather than the shared hashPassword() because this needs to be ready
+// synchronously at module load, but still imports BCRYPT_ROUNDS rather than
+// hardcoding 10, so this fixture can't silently drift from the real cost factor.
 describe('AuthService', () => {
   let service: AuthService;
   const repo = { findOne: jest.fn() };
   const jwtService = { sign: jest.fn(() => 'signed.jwt.token') };
 
   const PASSWORD = 'correct-horse-battery-staple';
-  const passwordHash = bcrypt.hashSync(PASSWORD, 10);
+  const passwordHash = bcrypt.hashSync(PASSWORD, BCRYPT_ROUNDS);
   const user: User = {
     id: 1,
     name: 'Jordan Lee',
     role: UserRole.Staff,
     email: 'jordan@example.com',
+    status: EntityStatus.ACTIVE,
     passwordHash,
   };
 
@@ -53,6 +60,30 @@ describe('AuthService', () => {
     it('returns null when no user has that email, without touching bcrypt', async () => {
       repo.findOne.mockResolvedValue(null);
       const result = await service.validateUser('nobody@example.com', PASSWORD);
+      expect(result).toBeNull();
+    });
+
+    // Phase 6 (docs/phase-6-plan.md §5): the two inactive-account assertions together
+    // pin the load-bearing ordering from AuthService.validateUser's comment — status
+    // is checked strictly AFTER the password compare, never instead of it.
+    it('throws with the deactivated-account message when the password is correct but the account is inactive', async () => {
+      const inactiveUser = { ...user, status: EntityStatus.INACTIVE };
+      repo.findOne.mockResolvedValue(inactiveUser);
+      await expect(service.validateUser(user.email, PASSWORD)).rejects.toThrow(
+        UnauthorizedException,
+      );
+      await expect(service.validateUser(user.email, PASSWORD)).rejects.toThrow(
+        'This account has been deactivated. Ask an Owner to reactivate it.',
+      );
+    });
+
+    it('returns null (the generic outcome), not the deactivated message, when an inactive account is given the WRONG password', async () => {
+      // This is the assertion that stops someone "simplifying" the check to the top
+      // of the method and reopening the Phase 3 email-enumeration hole: reaching the
+      // deactivated message must require already knowing the correct password.
+      const inactiveUser = { ...user, status: EntityStatus.INACTIVE };
+      repo.findOne.mockResolvedValue(inactiveUser);
+      const result = await service.validateUser(user.email, 'wrong-password');
       expect(result).toBeNull();
     });
   });

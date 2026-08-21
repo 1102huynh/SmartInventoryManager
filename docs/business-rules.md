@@ -128,9 +128,53 @@ involved.
   of either role. This is **not** a resolution of Q-6 (adjustment approval workflow,
   product.md) — it is a role gate, not a workflow, and Q-6 remains open. → FR-062,
   FR-020, FR-021, FR-022
-- **BR-073** [Decided 2026-08-20, Phase 5] — **Reads are open to both roles.** Every
-  read — products, suppliers, categories, transactions, dashboard, `/auth/me` — is
-  available to any authenticated user regardless of role. → FR-062
+- **BR-073** [Decided 2026-08-20, Phase 5; amended 2026-08-21, Phase 6] — **Reads are
+  open to both roles.** Every read — products, suppliers, categories, transactions,
+  dashboard, `/auth/me` — is available to any authenticated user regardless of role,
+  **except the user list, which BR-074 makes Owner-only.** The user list is a
+  different kind of read than inventory data: it's the index page of an
+  administrative screen, and after Phase 6 it carries every colleague's login email
+  and account status. → FR-062
+- **BR-074** [Decided 2026-08-21, Phase 6] — **User administration is Owner-only.**
+  Creating, editing, deactivating, reactivating, or resetting the password of a user
+  account — including reading the user list — requires the Owner role. This is an
+  explicit amendment to BR-073, not a quiet exception: leaving the user list open to
+  Staff would make Phase 3's identical-401-for-unknown-email-vs-wrong-password care
+  (`AuthService.validateUser`'s comment, `docs/phase-3-plan.md`) pointless from inside
+  the app, since any signed-in user could just read the list. Enforced by a single
+  class-level `@Roles(UserRole.Owner)` on
+  `UsersController` — the first controller in the app to apply it at the class level
+  rather than per-route, because every route on it, including `GET`, is Owner-only. →
+  FR-063
+- **BR-075** [Decided 2026-08-21, Phase 6] — **At least one active Owner must always
+  exist.** A change that would leave zero active Owners is rejected with `409`.
+  Applies to both paths that can violate it: demoting the last active Owner to Staff,
+  and deactivating the last active Owner. "Active" is part of the rule — a deactivated
+  Owner can't log in, so counting one toward the minimum would permit a state that
+  satisfies the letter of the rule while locking everyone out in practice. An Owner
+  may demote or deactivate *themselves*, provided another active Owner remains; the
+  rule protects the system, not any one account. → FR-063
+- **BR-076** [Decided 2026-08-21, Phase 6] — **Users are deactivated, never deleted.**
+  There is no user delete endpoint. `inventory_transactions.recorded_by_user_id` is a
+  `RESTRICT` foreign key, so FR-061 attribution would be worthless if the row it
+  points at could vanish — the same principle BR-004 already applies to products with
+  transaction history, extended here to every user without exception (a user with zero
+  transactions still isn't deleted; the account exists because a person exists). →
+  FR-061, FR-063, BR-004
+- **BR-077** [Decided 2026-08-21, Phase 6] — **Deactivation blocks authentication
+  immediately, not just future logins.** An inactive user cannot obtain a new token
+  (`POST /auth/login` returns `401`), and an *existing, unexpired* token belonging to
+  an inactive user is rejected with `401` on that user's very next request — not at
+  the token's expiry. This is the one case Phase 3's declined token-revocation list
+  (`docs/phase-3-plan.md`) turns out not to need: Phase 5's per-request database
+  lookup for role freshness (`JwtStrategy.validate`) already pays for it. → FR-063,
+  FR-060
+- **BR-078** [Decided 2026-08-21, Phase 6] — **Two password-change paths, no
+  email-based recovery.** A user changes their own password by supplying the current
+  one (`PATCH /auth/password`, `401` if it doesn't match); an Owner may reset any
+  user's password without knowing it (`PATCH /users/:id/password`) — a reset, not a
+  recovery, since the old password is never shown. No email-based reset exists; there
+  is no mail transport in this project. → FR-063, FR-064
 
 ## Rules Explicitly Deferred (Future scope, not defined now)
 

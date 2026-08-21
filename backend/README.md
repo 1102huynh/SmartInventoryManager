@@ -31,8 +31,10 @@ The API listens on `http://localhost:3000` by default (`PORT` in `.env`).
 
 **Signing in:** every route except `POST /auth/login` requires a bearer token. Every
 seeded demo user (`npm run seed`) shares one dev-only password, `password123`
-(`jordan@example.com`, `alex@example.com`, `sam@example.com` — see
-`src/database/seeds/run-seed.ts`).
+(`jordan@example.com`, `alex@example.com`, `sam@example.com`, and `riley@example.com`
+— see `src/database/seeds/run-seed.ts`). Riley is seeded deactivated (Phase 6,
+`docs/phase-6-plan.md`) and cannot actually sign in — that's intentional, to exercise
+the Users screen's inactive state.
 
 ## Tests
 

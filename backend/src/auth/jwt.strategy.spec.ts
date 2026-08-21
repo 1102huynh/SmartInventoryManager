@@ -1,5 +1,6 @@
 import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EntityStatus } from '../common/enums/entity-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
 import { User } from '../users/user.entity';
 import { UsersService } from '../users/users.service';
@@ -21,9 +22,11 @@ describe('JwtStrategy', () => {
 
   it("looks the user up by the token's subject and returns { id, role } from the database", async () => {
     const usersService = {
-      findOne: jest
-        .fn()
-        .mockResolvedValue({ id: 42, role: UserRole.Owner } as User),
+      findOne: jest.fn().mockResolvedValue({
+        id: 42,
+        role: UserRole.Owner,
+        status: EntityStatus.ACTIVE,
+      } as User),
     };
     const strategy = makeStrategy(usersService);
 
@@ -32,6 +35,24 @@ describe('JwtStrategy', () => {
       role: UserRole.Owner,
     });
     expect(usersService.findOne).toHaveBeenCalledWith(42);
+  });
+
+  // Phase 6 (docs/phase-6-plan.md §1 "Deactivation is what token revocation turned
+  // out to be"): the case that makes deactivation take effect on the user's very next
+  // request rather than at their token's expiry.
+  it('throws UnauthorizedException when the token is otherwise valid but the user has been deactivated', async () => {
+    const usersService = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 42,
+        role: UserRole.Staff,
+        status: EntityStatus.INACTIVE,
+      } as User),
+    };
+    const strategy = makeStrategy(usersService);
+
+    await expect(strategy.validate({ sub: 42 })).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
   });
 
   it('throws UnauthorizedException when the token is otherwise valid but its user no longer exists', async () => {

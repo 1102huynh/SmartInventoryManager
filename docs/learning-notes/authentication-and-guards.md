@@ -203,6 +203,116 @@ message, which tells a legitimately confused Staff user nothing about *why*. The
 explicit exception carries a message that says why, and `AllExceptionsFilter` passes
 it through unchanged.
 
+### Class-level vs. route-level guard metadata — and when each is right
+
+`RolesGuard` reads `@Roles()` metadata with
+`this.reflector.getAllAndOverride(ROLES_KEY, [context.getHandler(), context.getClass()])`
+— it was always able to read the decorator from *either* the individual route handler
+or the whole controller class; nothing about the Guard changed between Phase 5 and
+Phase 6. What changed is which one actually gets decorated, and that choice isn't
+cosmetic — it's a statement about the controller's shape.
+
+`ProductsController` and `SuppliersController` apply `@Roles(UserRole.Owner)`
+*per route*, because those controllers are genuinely mixed: `GET` stays open to any
+authenticated user, while `POST`/`PATCH`/`DELETE` are Owner-only. A class-level
+decorator there would lock the reads too — wrong behavior, not just wrong style.
+`UsersController` (Phase 6, `docs/phase-6-plan.md` §1) is the opposite shape: *every*
+route on it, including `GET`, is Owner-only (BR-074), so it gets exactly one
+`@Roles(UserRole.Owner)` at the class level:
+
+```ts
+@Roles(UserRole.Owner)
+@Controller('users')
+export class UsersController { /* six routes, no per-route @Roles() at all */ }
+```
+
+The general rule this leaves behind: **decorate at the narrowest level that's still
+uniform.** A controller with a uniform rule gets one class-level decorator, so a
+seventh route added later inherits it automatically instead of relying on whoever adds
+that route to remember to repeat it. A controller with a genuinely mixed rule gets
+per-route decorators, because a class-level one would silently be wrong for the routes
+that are supposed to differ. This is also why `PATCH /auth/password` — open to *any*
+authenticated user, not Owner-only — lives on `AuthController` rather than as
+`PATCH /users/me/password`: putting it on `UsersController` would force that
+controller's class-level decorator back to a per-route one, just to carve out a single
+exception, and lose the property the class-level form exists for.
+
+### Where password hashing belongs, and why the module graph forces it there
+
+Phase 6 adds two new places that need to hash or compare a password:
+`UsersService.create`/`setPassword` (hashing) and
+`UsersService.changeOwnPassword` (comparing, for the `currentPassword` check). The
+obvious-looking option — have `UsersService` call `AuthService`, which already knows
+how to hash and compare — doesn't compile, and the reason is worth understanding
+rather than working around blindly.
+
+`auth.module.ts` imports `UsersModule`:
+
+```ts
+@Module({
+  imports: [TypeOrmModule.forFeature([User]), UsersModule, PassportModule, /* ... */],
+  // ...
+})
+export class AuthModule {}
+```
+
+Nest's module graph is directed: `AuthModule` depends on `UsersModule`. If
+`UsersService` also depended on `AuthService` (from `AuthModule`), the graph would
+have an edge running both ways — a **circular dependency** between modules, which Nest
+either refuses to resolve or resolves in a fragile, load-order-sensitive way,
+neither of which is worth having for two one-line functions.
+
+The fix is to notice that hashing and comparing a password aren't really *auth logic*
+at all — they're a stateless transformation (`hashPassword(plain)`) and a stateless
+comparison (`verifyPassword(plain, hash)`) that don't need a database, a request, or
+either service's other dependencies. Pulling them out to a plain module,
+`src/common/password.ts`, sidesteps the cycle entirely: both `AuthService` and
+`UsersService` import the same two functions, and neither service imports the other.
+The general lesson: a circular *module* dependency is often really a sign that some
+piece of logic was placed inside a service when it belonged in neither — extracting it
+to a dependency-free function can dissolve the cycle instead of requiring you to pick
+which direction "wins."
+
+### An authorization fix that quietly became a revocation mechanism
+
+Phase 3 explicitly declined to build token revocation: logout is client-side only (the
+token is just forgotten), and there's no server-side list of "tokens that are no
+longer valid" for a Guard to check against. That was a deliberate simplicity trade,
+not an oversight — building one means either a database table of revoked tokens
+checked on every request (defeating a lot of the point of a stateless JWT) or a
+short-lived-token-plus-refresh-token scheme (real complexity for a project this size).
+
+Separately, Phase 5 changed `JwtStrategy.validate` to look the user up by id on
+*every* authenticated request, purely so `role` could be read fresh from the database
+instead of trusted from the token payload — a fix for a stale-role problem
+(`docs/phase-5-plan.md` §1), nothing to do with revocation at all.
+
+Phase 6 needed exactly one form of revocation: *this person's access should stop*,
+right now, not at their token's next expiry (`docs/phase-6-plan.md` §1). Adding it
+turned out to cost nothing, because Phase 5's per-request lookup was already loading
+the one row that would need to change:
+
+```ts
+const user = await this.usersService.findOne(payload.sub) /* ... */;
+if (!user) throw new UnauthorizedException('This account no longer exists.');
+if (user.status === EntityStatus.INACTIVE) {
+  throw new UnauthorizedException('This account has been deactivated.');
+}
+return { id: user.id, role: user.role };
+```
+
+One `if` on a field that was already sitting in memory. The general shape worth
+naming: **a per-request database lookup, once you have one, is a hook other features
+can attach to for free** — the marginal cost of one more field check on an
+already-loaded row is close to zero, even though building that same lookup *from
+scratch*, just to get this one property, would have been a much bigger decision (the
+exact trade Phase 3 weighed and declined). It's a reminder to look at what an existing
+design decision already bought before assuming a new requirement needs new
+infrastructure. What this does *not* provide, and still doesn't: revoking one specific
+token while leaving the rest of that user's sessions alone. That's the general
+revocation problem Phase 3 declined, and it's still declined — this only ever acts on
+*the person*, by flipping a row every request already reads, never on a token.
+
 ## Example
 
 `auth.service.spec.ts` proves the hash comparison with a *real* `bcrypt.hashSync()`
@@ -238,6 +348,15 @@ succeeds.
   expires, since nothing forces re-issuing a token on a role change. This project reads
   `role` fresh from the database on every request specifically to avoid that (see
   `JwtStrategy.validate`).
+- Applying `@Roles()` class-level "for consistency" on a controller whose routes
+  genuinely differ (e.g. `ProductsController`, where `GET` must stay open) — that
+  silently locks routes that were never supposed to be restricted. Class-level is only
+  correct when the rule really is uniform across every route on the controller.
+- Reaching for a service-to-service call (`UsersService` calling `AuthService`, or vice
+  versa) to reuse two lines of hashing logic, without checking the module import
+  graph first — `AuthModule` already imports `UsersModule`, so the reverse call would
+  be a circular module dependency. A dependency-free shared function
+  (`src/common/password.ts`) avoids the question entirely.
 
 ## Key Takeaways
 
@@ -260,3 +379,14 @@ succeeds.
 - A permissive default (`@Roles()` open, like most of this app's routes) and a strict
   default (`@Public()` closed, like `JwtAuthGuard`'s) can coexist deliberately — pick
   the default that matches which case is the *exception* for that particular rule.
+- Decorate at the narrowest level that's still uniform: class-level `@Roles()` when
+  every route on a controller shares the same rule (`UsersController`), per-route when
+  they genuinely differ (`ProductsController`) — the wrong choice either silently
+  over-restricts or relies on remembering to repeat a decorator.
+- A circular module dependency is often a sign that some logic belongs in neither
+  service — pulling it out to a dependency-free function (`src/common/password.ts`)
+  can dissolve the cycle instead of forcing a choice of which direction "wins."
+- A per-request database lookup added for one reason (role freshness) can become the
+  hook a later, unrelated feature (session revocation on deactivation) attaches to for
+  free — worth checking what an existing design decision already bought before
+  assuming a new requirement needs new infrastructure.

@@ -98,7 +98,11 @@ See `requirements.md` for the itemized functional requirements and their priorit
 - Barcode / QR scanning
 - Batch, lot, and expiry-date tracking
 - Multi-unit conversion (e.g., box ↔ piece)
-- Role-based access control beyond basic user attribution
+- Per-permission access control beyond the two-role (Owner/Staff) split, and approval
+  workflows (e.g., adjustment approval — product.md Q-6) [rewritten 2026-08-21, Phase
+  6: "Role-based access control beyond basic user attribution" no longer means
+  anything after Phase 5 (the role split) and Phase 6 (Owner-administered accounts) —
+  this names what's actually still future instead]
 - Pricing, sales, invoicing, and accounting integration
 - Reporting/analytics beyond the basic dashboard
 - Multi-currency support
@@ -121,14 +125,16 @@ be confirmed before or during UI mockup review.
 - **A-3**: Stock quantities are whole units (integers). No fractional or weight-based
   inventory (e.g., kilograms, liters) in MVP.
 - **A-4**: Each product has a single unit of measurement; unit conversion is out of scope.
-- **A-5** [Updated 2026-08-20, Phase 5]: Users authenticate individually so transactions can
+- **A-5** [Updated 2026-08-21, Phase 6]: Users authenticate individually so transactions can
   be attributed to a user (Phase 3), and as of Phase 5 the system enforces the two roles
   named in §3 — Owner can create/edit/deactivate/delete Products, Suppliers, and Categories;
   Staff can perform every inventory operation (stock-in, stock-out, adjustment) and every
-  read, the same as Owner. Still deferred: per-permission granularity beyond the two-role
-  split, and user management (no `PATCH /users/:id/role`, no admin screen — roles are set
-  directly in the database, same as users themselves). See BR-070–073 and
-  `docs/phase-5-plan.md`.
+  read, the same as Owner. As of Phase 6, user management is no longer deferred: an Owner
+  can create, edit, deactivate/reactivate, and reset the password of any account through the
+  UI (no more direct-database role assignment), and every user can change their own password.
+  Still deferred: per-permission granularity beyond the two-role split, and self-service
+  signup (accounts are still created *by* an Owner, never by the person who will use them).
+  See BR-070–078 and `docs/phase-5-plan.md` / `docs/phase-6-plan.md`.
 - **A-6**: No batch, lot, or expiry-date tracking in MVP.
 - **A-7**: Product categories are a light organizational aid (Should Have), not required for
   MVP correctness.

@@ -73,13 +73,15 @@ must satisfy.
 |---|---|---|---|---|
 | FR-050 | Dashboard summary | User sees a summary view on entry: total active products, count of low-stock products, and recent transaction activity. | Should | Composed from FR-004, FR-031, FR-042; no new data of its own |
 
-## User Attribution
+## User Attribution & Accounts
 
 | ID | Name | Description | Priority | Notes / Assumptions |
 |---|---|---|---|---|
 | FR-060 | User login | A user must authenticate to use the system. | Must | **Done** (Phase 3) — JWT login (`POST /auth/login`), every write behind a global guard. RBAC done in Phase 5 — see FR-062. |
 | FR-061 | Attribute transactions to user | Every stock-in, stock-out, and adjustment records which user performed it. | Must | Supports auditability, BR-050 |
-| FR-062 | Role-based authorization | A user is either Owner or Staff (BR-070). Creating, editing, deactivating, or deleting a Product, Supplier, or Category requires the Owner role; every read and every stock-in/out/adjustment is available to both roles. | Must | **Done** (Phase 5) — `RolesGuard` + `@Roles()`, enforced server-side; the frontend hides actions a Staff user can't perform. See BR-070–073 and `docs/phase-5-plan.md`. |
+| FR-062 | Role-based authorization | A user is either Owner or Staff (BR-070). Creating, editing, deactivating, or deleting a Product, Supplier, or Category requires the Owner role; every read and every stock-in/out/adjustment is available to both roles. | Must | **Done** (Phase 5) — `RolesGuard` + `@Roles()`, enforced server-side; the frontend hides actions a Staff user can't perform. See BR-070–073 and `docs/phase-5-plan.md`. Roles are now assigned through account management — see FR-063. |
+| FR-063 | Manage user accounts | An Owner can create a user account, edit its name/email/role, deactivate and reactivate it, and reset its password. | Should | **Done** (Phase 6) — `POST`/`PATCH /users/:id`/`PATCH /users/:id/status`/`PATCH /users/:id/password`, all Owner-only (BR-074). Not Must: `product.md` §7's MVP list doesn't include user administration, and the system is fully functional with seed-provisioned accounts — this closes an operability gap, not an MVP correctness gap. See `docs/phase-6-plan.md`. |
+| FR-064 | Change own password | Any authenticated user can change their own password by supplying the current one. | Should | **Done** (Phase 6) — `PATCH /auth/password`. Same Should reasoning as FR-063: an operability improvement, not an MVP requirement. See `docs/phase-6-plan.md`. |
 
 ## Cross-Reference Summary
 

@@ -1,6 +1,6 @@
-# API Documentation — Phase 5
+# API Documentation — Phase 6
 
-Status: Phase 5 — Role-Based Authorization
+Status: Phase 6 — User Management (Owner-Administered Accounts)
 Base URL: `http://localhost:3000` (see `backend/.env.example`)
 
 All request bodies are JSON. **Every route except `POST /auth/login` requires a valid
@@ -13,7 +13,16 @@ Routes marked **Owner only** below additionally require the caller's role to be
 `owner` (Phase 5, `docs/phase-5-plan.md`) — a valid token from a Staff user gets past
 the `401` check but is rejected with `403` on these routes specifically. In short:
 **`401` means no valid token; `403` means the wrong role.** Every route without that
-marker is open to any authenticated user, either role.
+marker is open to any authenticated user, either role. A deactivated user's token
+(Phase 6, `docs/phase-6-plan.md`) gets `401`, not `403` — they aren't a wrong-role
+caller, they aren't a caller at all.
+
+**One documented exception to "`401` means no valid token": `PATCH /auth/password`**
+also returns `401` for a wrong `currentPassword`, even though the caller's token is
+perfectly valid — deliberately, because the failure is "you haven't proven you're this
+user," the same category as a failed login, not a role or validation failure (see its
+row below and `docs/phase-6-plan.md` §1). A client that treats every `401` as "log the
+user out" needs to special-case this one route.
 
 Validation errors return `400` with `{ statusCode, message: string[], error }`.
 Business-rule violations (insufficient stock, inactive product, duplicate SKU, …)
@@ -25,8 +34,9 @@ return `409` with `{ statusCode, message: string, error }`. Not-found resources 
 
 | Method | Path | Body | Notes |
 |---|---|---|---|
-| POST | `/auth/login` | `{ email, password }` | The only route not requiring a token. `401` on wrong email/password — deliberately the same message for both, so the response never reveals which one was wrong. On success: `{ accessToken, user: { id, name, role } }`, where `role` is `"owner"` or `"staff"` (Phase 5). Token expires after 12h (no refresh token — see `docs/phase-3-plan.md`). |
+| POST | `/auth/login` | `{ email, password }` | The only route not requiring a token. `401` on wrong email/password — deliberately the same message for both, so the response never reveals which one was wrong. A **deactivated** account gets a *different* `401` message ("This account has been deactivated…") — deliberately not generic, since reaching it requires the password to have already matched (Phase 6, `docs/phase-6-plan.md` §1). On success: `{ accessToken, user: { id, name, role } }`, where `role` is `"owner"` or `"staff"` (Phase 5). Token expires after 12h (no refresh token — see `docs/phase-3-plan.md`). |
 | GET | `/auth/me` | — | Returns the caller's own user record (resolved from the token), minus `passwordHash`. |
+| PATCH | `/auth/password` | `{ currentPassword, newPassword }` | Any authenticated user, own account only. `204` on success. `401` if `currentPassword` doesn't match — proving who's sitting at the tab now, not just who opened it. `newPassword` must be at least 8 characters. |
 
 ## Categories
 
@@ -95,6 +105,17 @@ threshold shows up in `outOfStockCount` but not here.
 
 ## Users
 
-| Method | Path | Notes |
-|---|---|---|
-| GET | `/users` | Seeded demo users only — still no create/signup endpoint (see `docs/phase-3-plan.md` "No self-service signup"); responses never include `passwordHash` |
+**The whole controller is Owner-only** — a single class-level `@Roles(UserRole.Owner)`
+on `UsersController` (BR-074, amending BR-073), including `GET`. There is no signup
+endpoint (`docs/phase-3-plan.md` "No self-service signup" still holds) and no user
+delete endpoint — `PATCH /users/:id/status` is the whole lifecycle (BR-076). No
+response body from any of these routes ever includes `passwordHash`.
+
+| Method | Path | Body | Notes |
+|---|---|---|---|
+| GET | `/users` | | All users, by id. |
+| GET | `/users/:id` | | 404 if missing. |
+| POST | `/users` | `{ name, email, role, password }` | `201`. Sets the initial password directly — no generated credential, no forced-change-on-first-login. `password` must be at least 8 characters (a floor, not a policy). 409 on duplicate email. |
+| PATCH | `/users/:id` | `{ name?, email?, role? }` | Name/email/role only — never password. 409 on duplicate email. 409 (BR-075) when the change would demote the last active Owner. |
+| PATCH | `/users/:id/status` | `{ status: "active"\|"inactive" }` | 409 (BR-075) when the change would deactivate the last active Owner. Deactivation takes effect on the user's very next request (BR-077), not at their token's expiry. |
+| PATCH | `/users/:id/password` | `{ newPassword }` | `204`. An Owner's *reset*, not a *recovery* — no current password required, the old one is never shown. `newPassword` must be at least 8 characters. |

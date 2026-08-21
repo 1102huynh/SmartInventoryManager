@@ -1,9 +1,9 @@
 import 'dotenv/config';
-import * as bcrypt from 'bcrypt';
 import { Category } from '../../categories/category.entity';
 import { EntityStatus } from '../../common/enums/entity-status.enum';
 import { TransactionType } from '../../common/enums/transaction-type.enum';
 import { UserRole } from '../../common/enums/user-role.enum';
+import { hashPassword } from '../../common/password';
 import { InventoryTransaction } from '../../inventory/inventory-transaction.entity';
 import { Product } from '../../products/product.entity';
 import { Supplier } from '../../suppliers/supplier.entity';
@@ -34,9 +34,35 @@ const CATEGORY_NAMES = [
 const DEV_PASSWORD = 'password123';
 
 const USERS = [
-  { name: 'Jordan Lee', role: UserRole.Staff, email: 'jordan@example.com' },
-  { name: 'Alex Rivera', role: UserRole.Owner, email: 'alex@example.com' },
-  { name: 'Sam Patel', role: UserRole.Staff, email: 'sam@example.com' },
+  {
+    name: 'Jordan Lee',
+    role: UserRole.Staff,
+    email: 'jordan@example.com',
+    status: EntityStatus.ACTIVE,
+  },
+  {
+    name: 'Alex Rivera',
+    role: UserRole.Owner,
+    email: 'alex@example.com',
+    status: EntityStatus.ACTIVE,
+  },
+  {
+    name: 'Sam Patel',
+    role: UserRole.Staff,
+    email: 'sam@example.com',
+    status: EntityStatus.ACTIVE,
+  },
+  // Phase 6 (docs/phase-6-plan.md §2): a fourth, deactivated Staff user so the Users
+  // screen demonstrates both states out of the box, the same reasoning already
+  // applied to Sunrise Wholesale (the inactive supplier below). Deliberately given no
+  // transactions — see TRANSACTIONS' userIdx column, which never references index 3 —
+  // so every existing attribution and dashboard number stays exactly as it was.
+  {
+    name: 'Riley Chen',
+    role: UserRole.Staff,
+    email: 'riley@example.com',
+    status: EntityStatus.INACTIVE,
+  },
 ];
 
 const SUPPLIERS = [
@@ -375,7 +401,7 @@ async function run() {
       );
     const categoryIdByName = new Map(categories.map((c) => [c.name, c.id]));
 
-    const passwordHash = await bcrypt.hash(DEV_PASSWORD, 10);
+    const passwordHash = await hashPassword(DEV_PASSWORD);
     const users = await manager
       .getRepository(User)
       .save(

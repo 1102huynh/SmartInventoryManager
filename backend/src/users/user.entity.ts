@@ -1,5 +1,6 @@
 import { Exclude } from 'class-transformer';
 import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { EntityStatus } from '../common/enums/entity-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
 
 // Phase 2 kept this table deliberately minimal — see docs/backend-use-cases.md
@@ -21,6 +22,13 @@ export class User {
 
   @Column({ unique: true })
   email: string;
+
+  // Phase 6 (docs/phase-6-plan.md §1 "Users are deactivated, never deleted"): reuses
+  // EntityStatus, the same Active/Inactive lifecycle Product.status and
+  // Supplier.status already share — see AuthService.validateUser and
+  // JwtStrategy.validate for the two places an inactive user is actually stopped.
+  @Column({ type: 'enum', enum: EntityStatus, default: EntityStatus.ACTIVE })
+  status: EntityStatus;
 
   // @Exclude marks this field to be stripped by ClassSerializerInterceptor (registered
   // globally in main.ts) before a response is serialized to JSON — the one thing that

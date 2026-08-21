@@ -1,4 +1,4 @@
-import { UnauthorizedException } from '@nestjs/common';
+import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { UserRole } from '../common/enums/user-role.enum';
 import { User } from '../users/user.entity';
@@ -35,13 +35,31 @@ describe('JwtStrategy', () => {
   });
 
   it('throws UnauthorizedException when the token is otherwise valid but its user no longer exists', async () => {
+    // UsersService.findOne's actual rejection type for "no such row" — narrowing the
+    // catch to specifically this (rather than any rejection) is the point being
+    // tested, so the mock has to be the real exception type, not a plain Error.
     const usersService = {
-      findOne: jest.fn().mockRejectedValue(new Error('User 99 not found.')),
+      findOne: jest
+        .fn()
+        .mockRejectedValue(new NotFoundException('User 99 not found.')),
     };
     const strategy = makeStrategy(usersService);
 
     await expect(strategy.validate({ sub: 99 })).rejects.toBeInstanceOf(
       UnauthorizedException,
     );
+  });
+
+  it('does not mask an unrelated database failure as "account no longer exists"', async () => {
+    const dbError = new Error('connection terminated unexpectedly');
+    const usersService = {
+      findOne: jest.fn().mockRejectedValue(dbError),
+    };
+    const strategy = makeStrategy(usersService);
+
+    // Must propagate as-is — not swallowed into UnauthorizedException — so a
+    // transient DB failure doesn't log every signed-in user out and tell them their
+    // account was deleted, and so AllExceptionsFilter still gets to log it.
+    await expect(strategy.validate({ sub: 99 })).rejects.toBe(dbError);
   });
 });

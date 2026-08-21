@@ -73,8 +73,15 @@ See `docs/learning-notes/testing-strategy.md` for what each of these actually pr
 
 ## Current phase
 
-Phase 3 — JWT authentication (`docs/phase-3-plan.md`): real login, every write behind a
-global guard, FR-060 now Done. Phase 2 (`docs/backend-use-cases.md`) built the NestJS
-backend + PostgreSQL wired to the Phase 1 UI; see its closing summary (in the
+Phase 5 — Role-based authorization (`docs/phase-5-plan.md`): the `role` field that's
+been descriptive-only since Phase 2 is now enforced. Owner and Staff are the two
+roles; Owner is required to create/edit/deactivate/delete Products, Suppliers, and
+Categories, and every other authenticated action (stock-in, stock-out, adjustment,
+every read) is open to both. FR-062 now Done.
+
+Earlier phases: Phase 4 (`docs/phase-4-plan.md`) added Category CRUD, FR-005 Done.
+Phase 3 (`docs/phase-3-plan.md`) added JWT authentication — real login, every write
+behind a global guard, FR-060 Done. Phase 2 (`docs/backend-use-cases.md`) built the
+NestJS backend + PostgreSQL wired to the Phase 1 UI; see its closing summary (in the
 conversation, or ask for it to be re-derived) for architecture observations about what
 might eventually move to Go/Kafka.

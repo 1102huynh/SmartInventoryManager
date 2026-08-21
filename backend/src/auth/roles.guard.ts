@@ -1,4 +1,5 @@
 import {
+  CanActivate,
   ExecutionContext,
   ForbiddenException,
   Injectable,
@@ -22,7 +23,7 @@ import { UserRole } from '../common/enums/user-role.enum';
 // route would fail closed with a confusing 403 instead of behaving like its
 // neighbours.
 @Injectable()
-export class RolesGuard {
+export class RolesGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {

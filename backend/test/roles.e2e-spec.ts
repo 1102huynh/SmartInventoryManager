@@ -98,6 +98,26 @@ describe('Roles / authorization (e2e)', () => {
     expect(ownerAttempt.status).toBe(201);
   });
 
+  it('rejects Staff editing a product with 403, and allows Owner with 200', async () => {
+    const product = await asOwner(
+      request(app.getHttpServer()).post('/products'),
+    ).send({ name: 'Widget', sku: 'W-1', unit: 'each' });
+    const id = product.body.id;
+
+    // UpdateProductDto requires name+unit even though this is a PATCH (see its own
+    // comment on why it isn't PartialType) — send both so a real 200 from Owner
+    // can't be confused with a 400 from an incomplete body.
+    const staffAttempt = await asStaff(
+      request(app.getHttpServer()).patch(`/products/${id}`),
+    ).send({ name: 'Widget v2', unit: 'each' });
+    expect(staffAttempt.status).toBe(403);
+
+    const ownerAttempt = await asOwner(
+      request(app.getHttpServer()).patch(`/products/${id}`),
+    ).send({ name: 'Widget v2', unit: 'each' });
+    expect(ownerAttempt.status).toBe(200);
+  });
+
   it('rejects Staff setting a product status with 403, and allows Owner with 200', async () => {
     const product = await asOwner(
       request(app.getHttpServer()).post('/products'),
@@ -144,6 +164,23 @@ describe('Roles / authorization (e2e)', () => {
     expect(ownerAttempt.status).toBe(201);
   });
 
+  it('rejects Staff editing a supplier with 403, and allows Owner with 200', async () => {
+    const supplier = await asOwner(
+      request(app.getHttpServer()).post('/suppliers'),
+    ).send({ name: 'Acme Supplies' });
+    const id = supplier.body.id;
+
+    const staffAttempt = await asStaff(
+      request(app.getHttpServer()).patch(`/suppliers/${id}`),
+    ).send({ name: 'Acme Supplies Inc.' });
+    expect(staffAttempt.status).toBe(403);
+
+    const ownerAttempt = await asOwner(
+      request(app.getHttpServer()).patch(`/suppliers/${id}`),
+    ).send({ name: 'Acme Supplies Inc.' });
+    expect(ownerAttempt.status).toBe(200);
+  });
+
   it('rejects Staff setting a supplier status with 403, and allows Owner with 200', async () => {
     const supplier = await asOwner(
       request(app.getHttpServer()).post('/suppliers'),
@@ -173,6 +210,40 @@ describe('Roles / authorization (e2e)', () => {
     expect(ownerAttempt.status).toBe(201);
   });
 
+  it('rejects Staff renaming a category with 403, and allows Owner with 200', async () => {
+    const category = await asOwner(
+      request(app.getHttpServer()).post('/categories'),
+    ).send({ name: 'Beverages' });
+    const id = category.body.id;
+
+    const staffAttempt = await asStaff(
+      request(app.getHttpServer()).patch(`/categories/${id}`),
+    ).send({ name: 'Drinks' });
+    expect(staffAttempt.status).toBe(403);
+
+    const ownerAttempt = await asOwner(
+      request(app.getHttpServer()).patch(`/categories/${id}`),
+    ).send({ name: 'Drinks' });
+    expect(ownerAttempt.status).toBe(200);
+  });
+
+  it('rejects Staff deleting a category with 403, and allows Owner with 204', async () => {
+    const category = await asOwner(
+      request(app.getHttpServer()).post('/categories'),
+    ).send({ name: 'Beverages' });
+    const id = category.body.id;
+
+    const staffAttempt = await asStaff(
+      request(app.getHttpServer()).delete(`/categories/${id}`),
+    );
+    expect(staffAttempt.status).toBe(403);
+
+    const ownerAttempt = await asOwner(
+      request(app.getHttpServer()).delete(`/categories/${id}`),
+    );
+    expect(ownerAttempt.status).toBe(204);
+  });
+
   // The most important test in this file: it proves the phase didn't over-lock the
   // system and break the exact workflow the product exists for. A regression here
   // would be worse than a missing 403 — see docs/phase-5-plan.md §5.
@@ -188,6 +259,26 @@ describe('Roles / authorization (e2e)', () => {
     const res = await asStaff(
       request(app.getHttpServer()).post(`/products/${id}/stock-out`),
     ).send({ quantity: 3, occurredAt: '2026-08-02' });
+    expect(res.status).toBe(201);
+  });
+
+  // Adjustment is the one BR-072 explicitly keeps open to Staff despite being the
+  // most "sensitive-looking" of the three transaction types (docs/phase-5-plan.md §1
+  // "Adjustments stay open to Staff and Q-6 stays open") — a regression that made it
+  // Owner-only would silently re-open Q-6 through the back door, which is exactly
+  // what that design decision argues against.
+  it('allows Staff to record an adjustment', async () => {
+    const product = await asOwner(
+      request(app.getHttpServer()).post('/products'),
+    ).send({ name: 'Widget', sku: 'W-1', unit: 'each' });
+    const id = product.body.id;
+    await asOwner(request(app.getHttpServer()).post(`/products/${id}/stock-in`)).send(
+      { quantity: 10, occurredAt: '2026-08-01' },
+    );
+
+    const res = await asStaff(
+      request(app.getHttpServer()).post(`/products/${id}/adjustments`),
+    ).send({ newQuantity: 8, occurredAt: '2026-08-02', reason: 'Recount' });
     expect(res.status).toBe(201);
   });
 

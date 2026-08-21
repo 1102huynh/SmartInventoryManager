@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
@@ -43,7 +47,17 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   // no longer exists is rejected with 401 instead of sailing through on a valid
   // signature alone.
   async validate(payload: JwtPayload): Promise<{ id: number; role: UserRole }> {
-    const user = await this.usersService.findOne(payload.sub).catch(() => null);
+    // Only a genuine "no such user" (UsersService.findOne's NotFoundException) means
+    // the token is stale — that's the one case that should become a 401. Anything
+    // else (a DB connection blip, a timeout) must NOT be swallowed into the same
+    // "account no longer exists" response: this runs on every authenticated request,
+    // so treating a transient failure as a deleted account would log every signed-in
+    // user out and tell them their account was deleted, and re-throwing lets
+    // AllExceptionsFilter log the real error server-side instead of losing it here.
+    const user = await this.usersService.findOne(payload.sub).catch((err) => {
+      if (err instanceof NotFoundException) return null;
+      throw err;
+    });
     if (!user) {
       throw new UnauthorizedException('This account no longer exists.');
     }

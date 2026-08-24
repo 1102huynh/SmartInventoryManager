@@ -109,7 +109,41 @@ Current stock for a Product is derived by aggregating all of its Inventory Trans
 - **Dashboard is not a domain** — it is a presentation-layer composition of existing data
   and has no entities of its own.
 
-## 8. Cross-References
+## 8. Audit Timestamps
+
+Every table records `created_at` — set once, server-side, on insert, never
+user-supplied. A table whose rows can change after creation additionally records
+`updated_at` — bumped on every save of that row; a table whose rows are immutable
+does not, because there is nothing for it to ever record.
+
+- **`products`, `suppliers`, `users`, `categories`** — mutable rows, so all four carry
+  both columns (`users`/`categories` since Phase 7, `docs/phase-7-plan.md`; the other
+  two since `InitSchema`).
+- **`inventory_transactions`** — the worked example of the immutable case: `created_at`
+  only. BR-051 makes a recorded transaction immutable — corrections happen only by
+  recording a new transaction, never by editing an old one — so an `updated_at` on
+  this table would be a column whose value could only ever equal `created_at`. Its
+  absence is a direct consequence of that rule, not an oversight (see the entity
+  comment on `InventoryTransaction`).
+
+**`occurred_at` vs. `created_at`** — easy to conflate on `inventory_transactions`,
+the one entity that has both:
+- `occurred_at` (`timestamptz`, user-supplied, cannot be in the future per BR-052) is
+  a **business fact**: when the stock movement happened in the world. It can be
+  backdated to record yesterday's delivery.
+- `created_at` (`TIMESTAMP DEFAULT now()`, server-set) is an **audit fact**: when the
+  row was written to the database. It can never be backdated and carries no business
+  meaning.
+
+`Product`, `Supplier`, `User`, and `Category` have no business-event time of their
+own — there's no "when did this account come into existence in the world" distinct
+from "when was the row inserted" — so they carry only the audit kind.
+
+These columns are readable by anyone who can read the row and settable by no one;
+they carry no access-control weight of their own and inherit whatever role rule
+already governs their table's routes.
+
+## 9. Cross-References
 
 - Entities here are governed by rules in `business-rules.md` (see rule → entity references
   above).

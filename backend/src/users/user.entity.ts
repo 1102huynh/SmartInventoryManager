@@ -1,5 +1,11 @@
 import { Exclude } from 'class-transformer';
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
+} from 'typeorm';
 import { EntityStatus } from '../common/enums/entity-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
 
@@ -38,4 +44,14 @@ export class User {
   @Exclude()
   @Column({ name: 'password_hash' })
   passwordHash: string;
+
+  // Phase 7 (docs/phase-7-plan.md): the audit-timestamp pair Product/Supplier already
+  // carry. Not excluded — unlike passwordHash, these carry no secret and no access-
+  // control weight, so they're safe to serialize even on the nested `recordedBy` a
+  // transaction read embeds.
+  @CreateDateColumn({ name: 'created_at' })
+  createdAt: Date;
+
+  @UpdateDateColumn({ name: 'updated_at' })
+  updatedAt: Date;
 }

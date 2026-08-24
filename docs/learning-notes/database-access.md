@@ -42,6 +42,38 @@ itself, as a second line of defense behind the DTO/service validation:
 Even a bug that bypassed `InventoryService` entirely couldn't produce a row violating
 these — Postgres itself refuses the insert.
 
+## Audit timestamps: `@CreateDateColumn` / `@UpdateDateColumn`
+
+`Product`, `Supplier`, `User`, and `Category` (as of Phase 7,
+`docs/phase-7-plan.md`) all declare:
+
+```ts
+@CreateDateColumn({ name: 'created_at' })
+createdAt: Date;
+
+@UpdateDateColumn({ name: 'updated_at' })
+updatedAt: Date;
+```
+
+`@CreateDateColumn` sets the value once, on insert. `@UpdateDateColumn` bumps it on
+every `save()` of a managed (loaded) entity. Both are application-side — TypeORM sets
+them before issuing the `INSERT`/`UPDATE` — so anything that writes a row *without*
+going through the ORM (a raw `INSERT` in an e2e spec's `beforeEach`, a manual `psql`
+row) would get no value from these decorators at all. That's what the migration's own
+`DEFAULT now()` covers: it's a second, database-level source for the same value,
+there specifically so a non-ORM insert still ends up with a sensible timestamp
+instead of a `NOT NULL` violation. See `docs/domain-model.md` §8 for which tables get
+which column(s) and why.
+
+**The one trap**: a `QueryBuilder` `.update()` call skips `@UpdateDateColumn`
+entirely, because it never loads the entity into memory — it issues a raw `UPDATE`
+TypeORM never gets a chance to intercept. `updated_at` only stays honest as long as
+every write path goes through `repository.save()` or `.preload()` on a loaded
+entity, which is what `UsersService.update`/`setStatus`/`setPassword` and
+`CategoriesService.update` already do. If a future write path switches to a
+`QueryBuilder` update for performance, it would need to set `updated_at` explicitly,
+or `updated_at` would silently stop moving.
+
 ## Common Mistakes
 
 - Giving a nullable TypeScript field (`string | null`) a `@Column()` with no explicit

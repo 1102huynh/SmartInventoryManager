@@ -108,6 +108,38 @@ describe('Categories (e2e)', () => {
     expect(rename.body.name).toBe('Drinks');
   });
 
+  // Phase 7 (docs/phase-7-plan.md §5): audit timestamps.
+  it('list items include createdAt and updatedAt', async () => {
+    await auth(request(app.getHttpServer()).post('/categories')).send({
+      name: 'Beverages',
+    });
+    const list = await auth(request(app.getHttpServer()).get('/categories'));
+    expect(list.status).toBe(200);
+    expect(typeof list.body[0].createdAt).toBe('string');
+    expect(typeof list.body[0].updatedAt).toBe('string');
+  });
+
+  it('renaming a category moves updatedAt and leaves createdAt fixed', async () => {
+    const create = await auth(
+      request(app.getHttpServer()).post('/categories'),
+    ).send({ name: 'Beverages' });
+    const id = create.body.id;
+    const originalCreatedAt = create.body.createdAt;
+    const originalUpdatedAt = create.body.updatedAt;
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const rename = await auth(
+      request(app.getHttpServer()).patch(`/categories/${id}`),
+    ).send({ name: 'Drinks' });
+    expect(rename.status).toBe(200);
+    expect(rename.body.createdAt).toBe(originalCreatedAt);
+    expect(rename.body.updatedAt).not.toBe(originalUpdatedAt);
+    expect(new Date(rename.body.updatedAt).getTime()).toBeGreaterThan(
+      new Date(originalUpdatedAt).getTime(),
+    );
+  });
+
   it("rejects a rename to another category's existing name with 409", async () => {
     await auth(request(app.getHttpServer()).post('/categories')).send({
       name: 'Beverages',

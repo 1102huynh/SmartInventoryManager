@@ -603,7 +603,9 @@ everything before it can stay.
 - **`created_at` / `updated_at` on `users`** — the table has never had them, and
   "account created on" is a nice column on a screen, not a requirement. Adding audit
   timestamps is a reasonable small phase of its own, applied consistently, not a rider
-  here.
+  here. **Done — Phase 7** (`docs/phase-7-plan.md`): `users` and `categories` both
+  gained the pair, applied per the mutability rule the whole schema now follows
+  (`domain-model.md` §8), not just to `users` alone.
 - **Token revocation beyond deactivation** — revoking *a token* (rather than *a person*)
   still needs the server-side state Phase 3 declined, and still has no use case.
 - **Q-6, adjustment approval workflow** — still open, still untouched, and explicitly

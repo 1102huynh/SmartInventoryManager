@@ -1,7 +1,7 @@
 # Product Definition — Smart Inventory Manager
 
 Status: Phase 0 — Product & Business Analysis
-Last updated: 2026-08-20
+Last updated: 2026-08-24
 
 ## 1. Product Vision
 
@@ -174,3 +174,9 @@ These affect the UI mockup and should be resolved before or during that phase.
 - Business rules governing stock behavior → `business-rules.md`
 - Entities referenced above (Product, Supplier, Inventory Transaction, User) →
   `domain-model.md`
+- **[Added 2026-08-24, Phase 7]** `created_at`/`updated_at` audit timestamps
+  (`docs/phase-7-plan.md`, `domain-model.md` §8) — a data-model consistency change,
+  not a product decision. It resolves none of the open questions in §10 (Q-4, Q-6,
+  Q-7 remain exactly as open as before) and adds no new scope to §7; it's the
+  follow-on named in `docs/phase-6-plan.md` §7's "`created_at`/`updated_at` on
+  `users`" line, now done.

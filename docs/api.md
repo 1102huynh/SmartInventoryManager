@@ -1,7 +1,18 @@
-# API Documentation — Phase 6
+# API Documentation — Phase 7
 
-Status: Phase 6 — User Management (Owner-Administered Accounts)
+Status: Phase 7 — Audit Timestamps
 Base URL: `http://localhost:3000` (see `backend/.env.example`)
+
+Every resource response includes `createdAt` (an ISO timestamp, server-set, never
+user-supplied); every **mutable** resource — `users`, `products`, `suppliers`,
+`categories` — additionally includes `updatedAt`. `inventory_transactions` responses
+include `createdAt` only, no `updatedAt` at all — BR-051 makes those rows immutable,
+so there's nothing for an `updatedAt` to record (see `domain-model.md` §8). A
+transaction response also carries `occurredAt`, a different field entirely: the
+user-supplied business date the stock movement happened, not when the row was
+written — don't confuse the two when reading one. No route or request body reads or
+writes these columns; they ride every existing route's existing shape and role
+(Phase 7, `docs/phase-7-plan.md`).
 
 All request bodies are JSON. **Every route except `POST /auth/login` requires a valid
 token** — `Authorization: Bearer <accessToken>` (see "Auth" below and

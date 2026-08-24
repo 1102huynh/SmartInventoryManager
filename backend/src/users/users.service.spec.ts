@@ -33,6 +33,8 @@ describe('UsersService', () => {
       role: UserRole.Staff,
       status: EntityStatus.ACTIVE,
       passwordHash: bcrypt.hashSync('old-password', BCRYPT_ROUNDS),
+      createdAt: new Date('2026-08-01T00:00:00Z'),
+      updatedAt: new Date('2026-08-01T00:00:00Z'),
       ...overrides,
     };
   }
@@ -181,6 +183,22 @@ describe('UsersService', () => {
       const result = await service.update(3, { role: UserRole.Owner });
       expect(result.role).toBe(UserRole.Owner);
       expect(repo.count).not.toHaveBeenCalled();
+    });
+
+    // Phase 7 (docs/phase-7-plan.md §1): @UpdateDateColumn only bumps on
+    // repository.save() of a loaded entity — a QueryBuilder .update() would silently
+    // skip it, since that path never loads the entity. The mocked repo here only
+    // exposes save (not .update()), so this is really asserting the write goes
+    // through the loaded-entity mutation this test can see, not a raw builder call a
+    // mock could hide. The e2e layer (users.e2e-spec.ts) proves updated_at actually
+    // moves against a real database.
+    it('persists a change via repository.save on the loaded entity', async () => {
+      const target = makeUser({ id: 2, name: 'Old Name' });
+      repo.findOne.mockResolvedValue(target);
+      await service.update(2, { name: 'New Name' });
+      expect(repo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 2, name: 'New Name' }),
+      );
     });
   });
 

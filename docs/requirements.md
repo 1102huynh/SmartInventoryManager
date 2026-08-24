@@ -83,6 +83,16 @@ must satisfy.
 | FR-063 | Manage user accounts | An Owner can create a user account, edit its name/email/role, deactivate and reactivate it, and reset its password. | Should | **Done** (Phase 6) — `POST`/`PATCH /users/:id`/`PATCH /users/:id/status`/`PATCH /users/:id/password`, all Owner-only (BR-074). Not Must: `product.md` §7's MVP list doesn't include user administration, and the system is fully functional with seed-provisioned accounts — this closes an operability gap, not an MVP correctness gap. See `docs/phase-6-plan.md`. |
 | FR-064 | Change own password | Any authenticated user can change their own password by supplying the current one. | Should | **Done** (Phase 6) — `PATCH /auth/password`. Same Should reasoning as FR-063: an operability improvement, not an MVP requirement. See `docs/phase-6-plan.md`. |
 
+## Audit Timestamps (Phase 7 — no new FR)
+
+Phase 7 (`docs/phase-7-plan.md`) gave `users` and `categories` the same
+`created_at`/`updated_at` pair `products` and `suppliers` already had, and documented
+the convention (`domain-model.md` §8). This is a data-model consistency change, not a
+new capability — "when was this row written" is not a user goal in `product.md` §4 —
+so no FR is added for it. The capability it *enables* (showing "Added on" / "Last
+updated" on a detail view, which the frontend now does for products, suppliers, and
+users) is noted here as available to future work, not tracked as its own requirement.
+
 ## Cross-Reference Summary
 
 ```

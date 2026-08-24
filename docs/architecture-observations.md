@@ -81,3 +81,22 @@ phase's brief said to avoid.
   the documented MVP, including its one genuinely tricky concurrency case (see the
   concurrent stock-out test in `inventory.service.integration.spec.ts`), without
   needing either.
+
+## Cross-cutting: audit-timestamp convention (Phase 7)
+
+As of Phase 7 (`docs/phase-7-plan.md`), every table follows one uniform rule for
+`created_at`/`updated_at`, defined in `domain-model.md` §8: every row gets
+`created_at`; a row that can change also gets `updated_at`; `inventory_transactions`
+is the one deliberate exception (create-only, because BR-051 makes those rows
+immutable). This closed the last gap — `users` and `categories` had neither column
+before this phase; `products`, `suppliers`, and `inventory_transactions.created_at`
+had theirs since `InitSchema`.
+
+**A known, deliberately deferred question**: all of these audit columns are plain
+`TIMESTAMP` (no timezone), matching the four that existed before Phase 7 rather than
+introducing a second convention mid-schema. There's a real argument that server
+timestamps should be `timestamptz` throughout — the current plain `TIMESTAMP` columns
+are implicitly server-local/UTC by convention, not by an enforced type — but that's a
+schema-wide migration touching every existing audit column at once, not something to
+decide as a side effect of adding two tables' worth of columns. Parked here as a
+known latent question, not resolved.

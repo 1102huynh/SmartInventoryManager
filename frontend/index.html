@@ -649,6 +649,25 @@ const UI = {
     const sign = n > 0 ? '+' : (n < 0 ? '−' : '');
     return `${sign}${Math.abs(n)} ${unit}`;
   },
+  // Phase 7 (docs/phase-7-plan.md §3): one shared render helper for the "Added
+  // <date>" / "Last updated <date>" lines, rather than three copies in
+  // productDetail/supplierDetail/userForm. Returns `<div><span class="k">…</span>…</div>`
+  // rows meant to sit inside an existing `.detail-meta` block; returns '' if the
+  // entity has no createdAt yet (e.g. a not-yet-loaded skeleton state never calls
+  // this, but a defensive check costs nothing). "Last updated" is omitted when it
+  // isn't meaningfully different from "Added" — a row's create-time save() can set
+  // both within the same insert, and showing "Last updated" for a change that never
+  // happened would be exactly the confusion this convention exists to prevent.
+  auditMetaHtml(entity){
+    if (!entity || !entity.createdAt) return '';
+    const created = new Date(entity.createdAt);
+    const updated = entity.updatedAt ? new Date(entity.updatedAt) : null;
+    let html = `<div><span class="k">Added</span>${this.fmtDate(created)}</div>`;
+    if (updated && Math.abs(updated.getTime() - created.getTime()) > 1000) {
+      html += `<div><span class="k">Last updated</span>${this.fmtDate(updated)}</div>`;
+    }
+    return html;
+  },
   navigate(hash){ location.hash = hash; },
 
   icon(name){
@@ -1230,6 +1249,7 @@ Views.productDetail = function(container, id){
           <div class="detail-meta">
             <div><span class="k">Low-stock threshold</span>${product.lowStockThreshold === null ? 'Not set — never flagged' : product.lowStockThreshold + ' ' + UI.esc(product.unit)}</div>
             <div><span class="k">Category</span>${cat ? UI.esc(cat.name) : '—'}</div>
+            ${UI.auditMetaHtml(product)}
           </div>
         </div>
         <div class="header-actions">${Auth.isOwner() ? `<a class="btn btn-secondary" href="#/products/${product.id}/edit">Edit</a>` : ''}</div>
@@ -1885,6 +1905,7 @@ Views.supplierDetail = function(container, id){
             <div><span class="k">Contact</span>${UI.esc(supplier.contactName || '—')}</div>
             <div><span class="k">Email</span>${UI.esc(supplier.email || '—')}</div>
             <div><span class="k">Phone</span>${UI.esc(supplier.phone || '—')}</div>
+            ${UI.auditMetaHtml(supplier)}
           </div>
         </div>
         <div class="header-actions">${Auth.isOwner() ? `<a class="btn btn-secondary" href="#/suppliers/${supplier.id}/edit">Edit</a>` : ''}</div>
@@ -2263,7 +2284,9 @@ Views.userForm = function(container, id){
   function render(){
     container.innerHTML = `
       <div class="topbar-crumbs" style="margin-bottom:10px"><a href="#/users">Users</a> / ${editing ? UI.esc(user.name) : 'New User'}</div>
-      <div class="content-header"><div><h1>${editing ? 'Edit User' : 'New User'}</h1></div></div>
+      <div class="content-header"><div><h1>${editing ? 'Edit User' : 'New User'}</h1>
+        ${editing ? `<div class="detail-meta" style="margin-top:8px">${UI.auditMetaHtml(user)}</div>` : ''}
+      </div></div>
       <div class="card card-pad" style="max-width:560px">
         <form id="user-form" novalidate>
           <div class="field${errors.name ? ' has-error' : ''}">

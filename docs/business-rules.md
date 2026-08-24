@@ -79,6 +79,11 @@ involved.
 - **BR-051** [Confirmed] — **Immutability.** Recorded transactions cannot be edited or
   deleted. Corrections are made by recording a new adjustment transaction, never by altering
   history. → FR-022, FR-030
+  - [Noted 2026-08-24, Phase 7] This is *why* `inventory_transactions` has a
+    `created_at` column and no `updated_at`: a row that can never change has nothing
+    for an `updated_at` to ever record. See `domain-model.md` §8 "Audit Timestamps"
+    for the full created-vs-updated convention, applied here and to every other
+    table.
 - **BR-052** [Confirmed, documented 2026-08-20, Phase 4 review] — **Date cannot be in the
   future.** A transaction's `occurredAt` date cannot be later than today. This applies
   identically to stock-in, stock-out, and adjustment — it's a property of recording history

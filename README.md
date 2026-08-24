@@ -82,13 +82,19 @@ See `docs/learning-notes/testing-strategy.md` for what each of these actually pr
 
 ## Current phase
 
-Phase 6 — User management (`docs/phase-6-plan.md`): users are now a managed resource.
-An Owner can create, edit, deactivate/reactivate, and reset the password of any
-account through the UI — no more `psql` required. Every user can change their own
-password. Deactivating a user takes effect on their very next request, not at their
-token's expiry. FR-063 and FR-064 now Done.
+Phase 7 — Audit timestamps (`docs/phase-7-plan.md`): `users` and `categories` now
+carry `created_at`/`updated_at`, closing the last gap in a convention `products` and
+`suppliers` have had since day one. `inventory_transactions` deliberately keeps
+`created_at` only — those rows are immutable (BR-051), so there's nothing an
+`updated_at` could ever record. No new FR; this is data-model consistency, not a new
+capability. The product/supplier/user detail and edit views now show "Added" and
+"Last updated" dates where the data supports it. See `domain-model.md` §8 for the
+full convention.
 
-Earlier phases: Phase 5 (`docs/phase-5-plan.md`) enforced the `role` field — Owner and
+Earlier phases: Phase 6 (`docs/phase-6-plan.md`) made users a managed resource — an
+Owner can create, edit, deactivate/reactivate, and reset the password of any account
+through the UI, no more `psql` required; every user can change their own password.
+FR-063 and FR-064 Done. Phase 5 (`docs/phase-5-plan.md`) enforced the `role` field — Owner and
 Staff, Owner required for Product/Supplier/Category writes, every other authenticated
 action open to both. FR-062 Done. Phase 4 (`docs/phase-4-plan.md`) added Category
 CRUD, FR-005 Done. Phase 3 (`docs/phase-3-plan.md`) added JWT authentication — real

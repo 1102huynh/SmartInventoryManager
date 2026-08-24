@@ -163,6 +163,51 @@ describe('Smart Inventory Manager API (e2e)', () => {
     expect(history.body[0].recordedBy.passwordHash).toBeUndefined();
   });
 
+  // Phase 7 (docs/phase-7-plan.md §5/§7): pins the deliberate NON-change — a
+  // transaction row is create-only (BR-051), so its response has createdAt and no
+  // updatedAt at all, and this test would fail loudly if someone "completed the set"
+  // by adding an @UpdateDateColumn to InventoryTransaction.
+  it('a transaction response includes createdAt and has no updatedAt', async () => {
+    const product = await auth(
+      request(app.getHttpServer()).post('/products'),
+    ).send({ name: 'Widget', sku: 'W-1', unit: 'each' });
+    const id = product.body.id;
+
+    await auth(request(app.getHttpServer()).post(`/products/${id}/stock-in`))
+      .send({ quantity: 10, occurredAt: '2026-08-01' })
+      .expect(201);
+
+    const history = await auth(
+      request(app.getHttpServer()).get(`/products/${id}/transactions`),
+    );
+    expect(history.body).toHaveLength(1);
+    expect(typeof history.body[0].createdAt).toBe('string');
+    expect(history.body[0].updatedAt).toBeUndefined();
+  });
+
+  // Phase 7 §1 "No updated_at bump on child writes bleeding up to parents": recording
+  // a transaction against a product must not touch that product's own updatedAt —
+  // updatedAt means "this product's own fields were edited," not "some child row
+  // referenced it."
+  it("recording a stock-in does not change the product's updatedAt", async () => {
+    const product = await auth(
+      request(app.getHttpServer()).post('/products'),
+    ).send({ name: 'Widget', sku: 'W-1', unit: 'each' });
+    const id = product.body.id;
+    const beforeUpdatedAt = product.body.updatedAt;
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    await auth(request(app.getHttpServer()).post(`/products/${id}/stock-in`))
+      .send({ quantity: 10, occurredAt: '2026-08-01' })
+      .expect(201);
+
+    const after = await auth(
+      request(app.getHttpServer()).get(`/products/${id}`),
+    );
+    expect(after.body.updatedAt).toBe(beforeUpdatedAt);
+  });
+
   it('a pipe-rejected request never leaks a stack trace, over real HTTP', async () => {
     // A malformed :id param makes ParseIntPipe throw BadRequestException — an
     // HttpException, so AllExceptionsFilter takes its *first* branch (pass the

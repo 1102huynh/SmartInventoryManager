@@ -1,10 +1,20 @@
-import { Column, Entity, OneToMany, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  OneToMany,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
+} from 'typeorm';
 import { Product } from '../products/product.entity';
 
 // @Entity marks this class as a table definition — TypeORM reads the decorators on
 // this class to generate/verify the `categories` table. It's plain reference data
 // (domain-model.md: "no behavior of its own beyond classification"), so this is the
-// simplest possible entity: no status, no relations to manage beyond being pointed at.
+// simplest entity that still follows the audit-timestamp convention (see
+// domain-model.md "Audit timestamps"): no status, no relations to manage beyond
+// being pointed at — but it IS renamed via PATCH (Phase 4), so it still earns
+// updated_at the same way Product/Supplier/User do.
 @Entity('categories')
 export class Category {
   @PrimaryGeneratedColumn()
@@ -15,4 +25,10 @@ export class Category {
 
   @OneToMany(() => Product, (product) => product.category)
   products: Product[];
+
+  @CreateDateColumn({ name: 'created_at' })
+  createdAt: Date;
+
+  @UpdateDateColumn({ name: 'updated_at' })
+  updatedAt: Date;
 }

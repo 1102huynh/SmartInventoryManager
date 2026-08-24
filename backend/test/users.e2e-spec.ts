@@ -315,6 +315,46 @@ describe('Users / accounts (e2e)', () => {
     expect(withOld.status).toBe(401);
   });
 
+  // -------------------------------------------------------------- Phase 7: audit timestamps --
+  it('GET /users/:id includes createdAt and updatedAt as valid ISO strings', async () => {
+    const res = await asOwner(
+      request(app.getHttpServer()).get(`/users/${staffId}`),
+    );
+    expect(res.status).toBe(200);
+    expect(typeof res.body.createdAt).toBe('string');
+    expect(typeof res.body.updatedAt).toBe('string');
+    expect(Number.isNaN(Date.parse(res.body.createdAt))).toBe(false);
+    expect(Number.isNaN(Date.parse(res.body.updatedAt))).toBe(false);
+  });
+
+  // The one test that proves updated_at is live (bumped by @UpdateDateColumn on
+  // every repository.save()) rather than decorative — see docs/phase-7-plan.md §5.
+  // A short real delay, not a mocked clock, so this only passes against the actual
+  // TIMESTAMP column a real Postgres write produces.
+  it('create-then-edit moves updatedAt and leaves createdAt fixed', async () => {
+    const created = await asOwner(request(app.getHttpServer()).post('/users')).send({
+      name: 'Timestamp Check',
+      email: 'timestamp-check@example.com',
+      role: 'staff',
+      password: 'a-real-password',
+    });
+    expect(created.status).toBe(201);
+    const originalCreatedAt = created.body.createdAt;
+    const originalUpdatedAt = created.body.updatedAt;
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const edited = await asOwner(
+      request(app.getHttpServer()).patch(`/users/${created.body.id}`),
+    ).send({ name: 'Renamed' });
+    expect(edited.status).toBe(200);
+    expect(edited.body.createdAt).toBe(originalCreatedAt);
+    expect(edited.body.updatedAt).not.toBe(originalUpdatedAt);
+    expect(new Date(edited.body.updatedAt).getTime()).toBeGreaterThan(
+      new Date(originalUpdatedAt).getTime(),
+    );
+  });
+
   // -------------------------------------------------------------- passwordHash never leaks --
   // Every call asserts its own status FIRST — a `not.toMatch(/passwordHash/)` against
   // an unchecked response passes vacuously against an error body (e.g. an empty

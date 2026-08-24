@@ -30,6 +30,8 @@ describe('AuthService', () => {
     email: 'jordan@example.com',
     status: EntityStatus.ACTIVE,
     passwordHash,
+    createdAt: new Date('2026-08-01T00:00:00Z'),
+    updatedAt: new Date('2026-08-01T00:00:00Z'),
   };
 
   beforeEach(async () => {

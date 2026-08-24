@@ -14,6 +14,18 @@ export interface AppConfig {
     jwtSecret: string;
     jwtExpiresIn: string;
   };
+  // Phase 8 (docs/phase-8-plan.md §2): typed, not constants, for the same reason
+  // jwtExpiresIn is — a policy number a deployment might reasonably change — and
+  // because the e2e suite needs to raise the throttle limits and shrink the lockout
+  // window to make both features actually testable (see auth.e2e-spec.ts).
+  security: {
+    maxFailedLoginAttempts: number;
+    lockoutMinutes: number;
+    throttleTtlSeconds: number;
+    throttleLimit: number;
+    loginThrottleTtlSeconds: number;
+    loginThrottleLimit: number;
+  };
 }
 
 // Passed to ConfigModule.forRoot({ load: [configuration] }) — Nest calls this once at
@@ -35,5 +47,29 @@ export default (): AppConfig => ({
     // Phase 3 design decision: one access token, no refresh token, expiring after a
     // full shift — see docs/phase-3-plan.md "Token: a single JWT access token".
     jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? '12h',
+  },
+  security: {
+    // Five consecutive failures locks the account for fifteen minutes
+    // (docs/phase-8-plan.md §1 "The lock is temporary and self-clearing").
+    maxFailedLoginAttempts: parseInt(
+      process.env.AUTH_MAX_FAILED_ATTEMPTS ?? '5',
+      10,
+    ),
+    // parseFloat, not parseInt: the e2e suite needs a lockout window measured in
+    // seconds (e.g. AUTH_LOCKOUT_MINUTES=0.05, three seconds) to prove auto-expiry
+    // without a real fifteen-minute wait — parseInt would truncate that to 0 and
+    // defeat the test (docs/phase-8-plan.md §5 "the lockout window shorten to a
+    // second or two, which is also what makes the auto-expiry actually testable").
+    lockoutMinutes: parseFloat(process.env.AUTH_LOCKOUT_MINUTES ?? '15'),
+    // A generous backstop on every route.
+    throttleTtlSeconds: parseInt(process.env.THROTTLE_TTL_SECONDS ?? '60', 10),
+    throttleLimit: parseInt(process.env.THROTTLE_LIMIT ?? '120', 10),
+    // The tighter limit applied to POST /auth/login and PATCH /auth/password only
+    // (see AuthController's @Throttle() overrides).
+    loginThrottleTtlSeconds: parseInt(
+      process.env.THROTTLE_LOGIN_TTL_SECONDS ?? '300',
+      10,
+    ),
+    loginThrottleLimit: parseInt(process.env.THROTTLE_LOGIN_LIMIT ?? '10', 10),
   },
 });

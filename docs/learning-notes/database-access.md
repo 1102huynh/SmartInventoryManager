@@ -65,14 +65,35 @@ there specifically so a non-ORM insert still ends up with a sensible timestamp
 instead of a `NOT NULL` violation. See `docs/domain-model.md` §8 for which tables get
 which column(s) and why.
 
-**The one trap**: a `QueryBuilder` `.update()` call skips `@UpdateDateColumn`
-entirely, because it never loads the entity into memory — it issues a raw `UPDATE`
-TypeORM never gets a chance to intercept. `updated_at` only stays honest as long as
-every write path goes through `repository.save()` or `.preload()` on a loaded
-entity, which is what `UsersService.update`/`setStatus`/`setPassword` and
-`CategoriesService.update` already do. If a future write path switches to a
-`QueryBuilder` update for performance, it would need to set `updated_at` explicitly,
-or `updated_at` would silently stop moving.
+**The one trap — corrected 2026-08-24, Phase 8, by an e2e test that failed and
+proved it wrong**: the folklore (repeated in this file until now) is that a
+`QueryBuilder` `.update()` — including `repository.update()`, which builds one
+internally — skips `@UpdateDateColumn` because it never loads the entity into
+memory. **That's backwards.** `UpdateQueryBuilder` (`typeorm/query-builder/`
+`UpdateQueryBuilder.js`) unconditionally appends
+`SET "updated_at" = CURRENT_TIMESTAMP` to *any* update whose target columns don't
+already include the update-date column — `repository.update()` bumps it exactly
+the way `repository.save()` does, with no entity load required. The folklore is
+true for `@BeforeUpdate()`-style *listeners/subscribers*, which genuinely don't run
+on a `QueryBuilder` update; it is false for this one piece of column metadata,
+which `UpdateQueryBuilder` treats specially and populates itself.
+
+**The actual way to keep a write from moving `updated_at`**: TypeORM only
+auto-populates the update-date column when it's *absent* from the values you pass
+to `.update()`/`.set()` — include it yourself, with its own current, unchanged
+value, and your value wins instead of `CURRENT_TIMESTAMP`. `UsersService.persistLoginState`
+(Phase 8, `docs/phase-8-plan.md`) does exactly this: a failed login attempt writes
+`failedLoginAttempts`/`lockedUntil` via `repository.update()` and *also* passes
+`updatedAt: user.updatedAt` (the value already sitting on the loaded entity) to pin
+it, because a stranger who never authenticated as anyone must not be able to move a
+column that's supposed to mean "this row's own fields were edited." Discovered the
+hard way — the first version of that code passed only the two changed columns,
+assumed `.update()` alone was enough, and an e2e test asserting `updatedAt` hadn't
+moved failed against a real database.
+
+`UsersService.update`/`setStatus`/`setPassword` and `CategoriesService.update` are
+unaffected by any of this — they use `repository.save()` on a loaded entity, which
+is supposed to bump `updated_at`, and does.
 
 ## Common Mistakes
 

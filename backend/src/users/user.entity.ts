@@ -54,4 +54,20 @@ export class User {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
+
+  // Phase 8 (docs/phase-8-plan.md §2): the login-lockout counter pair. Both @Exclude()d
+  // — unlike the audit timestamps above, these are operational security state, and a
+  // GET /products response should not tell every authenticated user which colleague is
+  // currently locked out (or close to it) via the nested `recordedBy`. The one
+  // Owner-visible presentation (UsersController's `locked` boolean on GET /users) reads
+  // them through an explicit computed shape rather than by un-excluding these columns.
+  @Exclude()
+  @Column({ name: 'failed_login_attempts', type: 'int', default: 0 })
+  failedLoginAttempts: number;
+
+  // NULL, or a time in the past, both mean "not locked" — nothing sweeps expired locks;
+  // UsersService.isLocked is the one place that interprets this column.
+  @Exclude()
+  @Column({ name: 'locked_until', type: 'timestamp', nullable: true })
+  lockedUntil: Date | null;
 }

@@ -1,6 +1,10 @@
 // Must run before any other import pulls in ConfigModule — see app.e2e-spec.ts for
 // why this has to be the very first thing in the file.
 process.env.DB_DATABASE = 'smart_inventory_e2e';
+// Phase 8 (docs/phase-8-plan.md §5/§6): see app.e2e-spec.ts's comment — raised so
+// this file's rapid-fire logins never trip the production-sized login throttle.
+process.env.THROTTLE_LOGIN_LIMIT = '1000';
+process.env.THROTTLE_LIMIT = '10000';
 
 import {
   ClassSerializerInterceptor,

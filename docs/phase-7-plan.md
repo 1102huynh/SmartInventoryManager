@@ -142,6 +142,16 @@ services occasionally use does **not**, because it never loads the entity. The P
 `save`/`preload` style, so this is fine as written — but it is the one way an
 `updated_at` could silently fail to move, so the tests assert it actually moves.
 
+> **Correction, 2026-08-24 (Phase 8):** the claim above about `.update()` is
+> backwards — `repository.update()`/`QueryBuilder.update()` bumps `updated_at` too
+> (TypeORM's `UpdateQueryBuilder` auto-appends `SET updated_at = CURRENT_TIMESTAMP`
+> unless that column is explicitly among the values you pass), the opposite of what
+> this section assumed. Harmless here, since nothing in Phase 7 ever used
+> `.update()`, but Phase 8 built on this exact assumption for a different reason
+> (keeping a failed login attempt from moving `users.updated_at`) and an e2e test
+> caught it. See `docs/learning-notes/database-access.md` "The one trap" for the
+> corrected explanation and the actual workaround.
+
 ### The migration is add-with-default; no add-then-constrain dance is needed
 
 `AddUserStatus` had to do the nullable → backfill → `SET NOT NULL` two-step because its

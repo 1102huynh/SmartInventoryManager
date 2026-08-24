@@ -174,12 +174,40 @@ involved.
   (`docs/phase-3-plan.md`) turns out not to need: Phase 5's per-request database
   lookup for role freshness (`JwtStrategy.validate`) already pays for it. → FR-063,
   FR-060
-- **BR-078** [Decided 2026-08-21, Phase 6] — **Two password-change paths, no
-  email-based recovery.** A user changes their own password by supplying the current
-  one (`PATCH /auth/password`, `401` if it doesn't match); an Owner may reset any
-  user's password without knowing it (`PATCH /users/:id/password`) — a reset, not a
-  recovery, since the old password is never shown. No email-based reset exists; there
-  is no mail transport in this project. → FR-063, FR-064
+- **BR-078** [Decided 2026-08-21, Phase 6; amended 2026-08-24, Phase 8] — **Two
+  password-change paths, no email-based recovery.** A user changes their own
+  password by supplying the current one (`PATCH /auth/password`, `401` if it doesn't
+  match); an Owner may reset any user's password without knowing it
+  (`PATCH /users/:id/password`) — a reset, not a recovery, since the old password is
+  never shown. No email-based reset exists; there is no mail transport in this
+  project. An Owner's reset (but not a self-service change) also clears a BR-080
+  lock — see that rule for why one route does both jobs. → FR-063, FR-064
+- **BR-079** [Decided 2026-08-24, Phase 8] — **Authentication attempts are
+  rate-limited.** Requests to `POST /auth/login` and `PATCH /auth/password` are
+  capped per client address per window (defaults: 10 attempts / 5 minutes); exceeding
+  the cap returns `429`, and the request never reaches password verification. A
+  generous global cap (default 120 requests / 60 seconds) applies to
+  every other route as a backstop. The throttler guard runs first, ahead of
+  `JwtAuthGuard` and `RolesGuard`, so a flood is rejected before any database lookup
+  or password hash comparison — see `docs/phase-8-plan.md` §1. → FR-060
+- **BR-080** [Decided 2026-08-24, Phase 8] — **Consecutive failed logins lock an
+  account temporarily.** Five consecutive failures (configurable) lock the account
+  for fifteen minutes (configurable); the lock expires on its own, a successful login
+  resets the counter, and **further failures during a lock do not extend it** — a
+  script firing one guess a minute must not be able to keep an account locked
+  forever. An Owner's password reset (BR-078) clears a lock; there is no other manual
+  unlock, and no permanent lock exists — a lock that only an Owner could clear would
+  have a state where the last active Owner (BR-075) is locked out of their own system
+  with no recovery. → FR-060, FR-063
+- **BR-081** [Decided 2026-08-24, Phase 8] — **A lock is not a deactivation, and
+  never reveals whether an account exists.** A locked account's specific message
+  ("Too many failed attempts…") is returned only after the supplied password has
+  already matched; every other failure returns the same generic `401` as an unknown
+  email (Phase 3) — the same enumeration-safety ordering BR-077's deactivation
+  message already relies on, applied to a second state. Unlike deactivation
+  (BR-077), a lock does **not** revoke an existing token — `JwtStrategy.validate` has
+  no lock check, so a locked account's already-issued, unexpired token keeps working;
+  the lock blocks *obtaining* a new one, not using one already held. → FR-060
 
 ## Rules Explicitly Deferred (Future scope, not defined now)
 

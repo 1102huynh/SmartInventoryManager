@@ -1,6 +1,13 @@
 // Must run before any other import pulls in ConfigModule — see app.e2e-spec.ts for
 // why this has to be the very first thing in the file.
 process.env.DB_DATABASE = 'smart_inventory_e2e';
+// Phase 8 (docs/phase-8-plan.md §5/§6): see app.e2e-spec.ts's comment — raised so
+// this file's rapid-fire logins never trip the production-sized login throttle.
+process.env.THROTTLE_LOGIN_LIMIT = '1000';
+process.env.THROTTLE_LIMIT = '10000';
+// Phase 8 (docs/phase-8-plan.md §5): short enough to prove the `locked` boolean and
+// the reset-clears-lock behavior without a real fifteen-minute wait.
+process.env.AUTH_LOCKOUT_MINUTES = '0.05';
 
 import {
   ClassSerializerInterceptor,
@@ -127,16 +134,18 @@ describe('Users / accounts (e2e)', () => {
     ).toBe(403);
     expect(
       (
-        await asStaff(
-          request(server).patch(`/users/${staffId}/password`),
-        ).send({ newPassword: 'a-new-password' })
+        await asStaff(request(server).patch(`/users/${staffId}/password`)).send(
+          { newPassword: 'a-new-password' },
+        )
       ).status,
     ).toBe(403);
   });
 
   // -------------------------------------------------------------- create + login round-trip --
   it('Owner creates a user, and that user can immediately log in with the password they were given', async () => {
-    const created = await asOwner(request(app.getHttpServer()).post('/users')).send({
+    const created = await asOwner(
+      request(app.getHttpServer()).post('/users'),
+    ).send({
       name: 'New Hire',
       email: 'new-hire@example.com',
       role: 'staff',
@@ -152,12 +161,14 @@ describe('Users / accounts (e2e)', () => {
   });
 
   it('duplicate email on create returns 409', async () => {
-    const res = await asOwner(request(app.getHttpServer()).post('/users')).send({
-      name: 'Clash',
-      email: 'staff@example.com',
-      role: 'staff',
-      password: 'a-real-password',
-    });
+    const res = await asOwner(request(app.getHttpServer()).post('/users')).send(
+      {
+        name: 'Clash',
+        email: 'staff@example.com',
+        role: 'staff',
+        password: 'a-real-password',
+      },
+    );
     expect(res.status).toBe(409);
   });
 
@@ -289,7 +300,10 @@ describe('Users / accounts (e2e)', () => {
   it('PATCH /auth/password with the wrong current password returns 401 and changes nothing', async () => {
     const res = await asStaff(
       request(app.getHttpServer()).patch('/auth/password'),
-    ).send({ currentPassword: 'not-my-password', newPassword: 'a-brand-new-password' });
+    ).send({
+      currentPassword: 'not-my-password',
+      newPassword: 'a-brand-new-password',
+    });
     expect(res.status).toBe(401);
 
     const withOld = await request(app.getHttpServer())
@@ -306,7 +320,10 @@ describe('Users / accounts (e2e)', () => {
 
     const withNew = await request(app.getHttpServer())
       .post('/auth/login')
-      .send({ email: 'staff@example.com', password: 'owner-set-this-password' });
+      .send({
+        email: 'staff@example.com',
+        password: 'owner-set-this-password',
+      });
     expect(withNew.status).toBe(200);
 
     const withOld = await request(app.getHttpServer())
@@ -332,7 +349,9 @@ describe('Users / accounts (e2e)', () => {
   // A short real delay, not a mocked clock, so this only passes against the actual
   // TIMESTAMP column a real Postgres write produces.
   it('create-then-edit moves updatedAt and leaves createdAt fixed', async () => {
-    const created = await asOwner(request(app.getHttpServer()).post('/users')).send({
+    const created = await asOwner(
+      request(app.getHttpServer()).post('/users'),
+    ).send({
       name: 'Timestamp Check',
       email: 'timestamp-check@example.com',
       role: 'staff',
@@ -355,24 +374,120 @@ describe('Users / accounts (e2e)', () => {
     );
   });
 
+  // -------------------------------------------------------------- Phase 8: account lockout --
+  it('GET /users/:id shows locked: false for a normal account, and locked: true once it has been locked', async () => {
+    const before = await asOwner(
+      request(app.getHttpServer()).get(`/users/${staffId}`),
+    );
+    expect(before.status).toBe(200);
+    expect(before.body.locked).toBe(false);
+
+    for (let i = 0; i < 5; i++) {
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: 'staff@example.com', password: 'wrong-password' });
+    }
+
+    const after = await asOwner(
+      request(app.getHttpServer()).get(`/users/${staffId}`),
+    );
+    expect(after.status).toBe(200);
+    expect(after.body.locked).toBe(true);
+
+    // GET /users (the list) carries the same computed field.
+    const list = await asOwner(request(app.getHttpServer()).get('/users'));
+    const users: Array<{ id: number; locked: boolean }> = list.body;
+    const staffRow = users.find((u) => u.id === staffId);
+    expect(staffRow?.locked).toBe(true);
+  });
+
+  // Phase 7's own rule (docs/phase-7-plan.md §1), re-asserted here because Phase 8
+  // is the first feature that could plausibly break it: updated_at must mean "this
+  // row's own fields were edited," never "something merely touched it." A failed
+  // login can be fired by a stranger who has never authenticated as anyone — it must
+  // not move the account's audit timestamp, or the "Last updated" an Owner reads on
+  // a colleague's account would silently start meaning "last time someone guessed
+  // at this password." UsersService persists lockout state via repository.update()
+  // rather than save() specifically so this stays true — see its comment.
+  it("failed login attempts do not change the account's updatedAt, even once it locks", async () => {
+    const before = await asOwner(
+      request(app.getHttpServer()).get(`/users/${staffId}`),
+    );
+    const originalUpdatedAt = before.body.updatedAt;
+
+    for (let i = 0; i < 5; i++) {
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: 'staff@example.com', password: 'wrong-password' });
+    }
+
+    const after = await asOwner(
+      request(app.getHttpServer()).get(`/users/${staffId}`),
+    );
+    expect(after.body.locked).toBe(true); // the account really did lock
+    expect(after.body.updatedAt).toBe(originalUpdatedAt); // but updatedAt didn't move
+  });
+
+  // The unlock mechanism (docs/phase-8-plan.md §1 "An Owner's password reset clears
+  // the lock") — no separate PATCH /users/:id/unlock route exists because this one
+  // already does the job.
+  it("an Owner's password reset clears a lock", async () => {
+    for (let i = 0; i < 5; i++) {
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: 'staff@example.com', password: 'wrong-password' });
+    }
+    const lockedCheck = await asOwner(
+      request(app.getHttpServer()).get(`/users/${staffId}`),
+    );
+    expect(lockedCheck.body.locked).toBe(true);
+
+    const reset = await asOwner(
+      request(app.getHttpServer()).patch(`/users/${staffId}/password`),
+    ).send({ newPassword: 'owner-cleared-this-lock' });
+    expect(reset.status).toBe(204);
+
+    const afterReset = await asOwner(
+      request(app.getHttpServer()).get(`/users/${staffId}`),
+    );
+    expect(afterReset.body.locked).toBe(false);
+
+    // Immediately usable — no waiting out the (short, e2e-only) lockout window.
+    const login = await request(app.getHttpServer()).post('/auth/login').send({
+      email: 'staff@example.com',
+      password: 'owner-cleared-this-lock',
+    });
+    expect(login.status).toBe(200);
+  });
+
   // -------------------------------------------------------------- passwordHash never leaks --
   // Every call asserts its own status FIRST — a `not.toMatch(/passwordHash/)` against
   // an unchecked response passes vacuously against an error body (e.g. an empty
   // `{"message":...}` from a 4xx/5xx contains no `passwordHash` either), which would
   // let this test go green while proving nothing about the success-path response it's
   // actually meant to cover.
-  it('no user response body anywhere contains passwordHash, including a nested recordedBy', async () => {
+  it('no user response body anywhere contains passwordHash, failedLoginAttempts, or lockedUntil, including a nested recordedBy', async () => {
+    // Phase 8 (docs/phase-8-plan.md §2): failedLoginAttempts/lockedUntil are
+    // operational security state, @Exclude()d the same way passwordHash is —
+    // re-asserted here alongside the pre-existing passwordHash check because this
+    // phase touches the exact same User serialization surface.
     const list = await asOwner(request(app.getHttpServer()).get('/users'));
     expect(list.status).toBe(200);
     expect(JSON.stringify(list.body)).not.toMatch(/passwordHash/);
+    expect(JSON.stringify(list.body)).not.toMatch(/failedLoginAttempts/);
+    expect(JSON.stringify(list.body)).not.toMatch(/lockedUntil/);
 
     const one = await asOwner(
       request(app.getHttpServer()).get(`/users/${staffId}`),
     );
     expect(one.status).toBe(200);
     expect(JSON.stringify(one.body)).not.toMatch(/passwordHash/);
+    expect(JSON.stringify(one.body)).not.toMatch(/failedLoginAttempts/);
+    expect(JSON.stringify(one.body)).not.toMatch(/lockedUntil/);
 
-    const created = await asOwner(request(app.getHttpServer()).post('/users')).send({
+    const created = await asOwner(
+      request(app.getHttpServer()).post('/users'),
+    ).send({
       name: 'No Leak',
       email: 'no-leak@example.com',
       role: 'staff',
@@ -380,6 +495,8 @@ describe('Users / accounts (e2e)', () => {
     });
     expect(created.status).toBe(201);
     expect(JSON.stringify(created.body)).not.toMatch(/passwordHash/);
+    expect(JSON.stringify(created.body)).not.toMatch(/failedLoginAttempts/);
+    expect(JSON.stringify(created.body)).not.toMatch(/lockedUntil/);
 
     // A transaction's nested `recordedBy` is the other place a User object gets
     // serialized (docs/phase-6-plan.md §5) — record one and check it.
@@ -388,9 +505,13 @@ describe('Users / accounts (e2e)', () => {
     ).send({ name: 'Widget', sku: 'W-1', unit: 'each' });
     expect(product.status).toBe(201);
     const stockIn = await asOwner(
-      request(app.getHttpServer()).post(`/products/${product.body.id}/stock-in`),
+      request(app.getHttpServer()).post(
+        `/products/${product.body.id}/stock-in`,
+      ),
     ).send({ quantity: 10, occurredAt: '2026-08-01' });
     expect(stockIn.status).toBe(201);
     expect(JSON.stringify(stockIn.body)).not.toMatch(/passwordHash/);
+    expect(JSON.stringify(stockIn.body)).not.toMatch(/failedLoginAttempts/);
+    expect(JSON.stringify(stockIn.body)).not.toMatch(/lockedUntil/);
   });
 });

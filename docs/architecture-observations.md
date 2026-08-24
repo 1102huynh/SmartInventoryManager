@@ -100,3 +100,32 @@ are implicitly server-local/UTC by convention, not by an enforced type — but t
 schema-wide migration touching every existing audit column at once, not something to
 decide as a side effect of adding two tables' worth of columns. Parked here as a
 known latent question, not resolved.
+
+## Cross-cutting: two rate-limiting mechanisms, two storage models (Phase 8)
+
+Phase 8 (`docs/phase-8-plan.md`) adds two related but distinct controls, and they
+deliberately don't share storage:
+
+- **The request throttle** (`@nestjs/throttler`, `ThrottlerModule`) counts requests
+  per client address per route, in the throttler's default **in-memory** store — a
+  plain `Map`, alive only for the life of one Node process.
+- **Account lockout** (`failed_login_attempts`/`locked_until` on `users`) counts
+  consecutive failures per account, in **Postgres** — the same durable store as
+  everything else in this app.
+
+Single-process today (see "What currently belongs naturally in NestJS," above), so
+both are correct as implemented: nothing is lost on a normal request cycle. The
+specific thing to watch for: **the moment this app runs as more than one instance,
+the lock keeps working unchanged (Postgres is shared), but the throttle silently
+becomes per-instance** — an N-instance deployment would permit N× the configured
+rate, with no error, no warning, just a quietly weaker limit. This is a genuinely
+different failure mode from the usual "add a load balancer and things just work"
+story most of this app's design gives, precisely because the throttle's storage
+choice was made for single-process correctness, not multi-instance correctness.
+
+**What to look for before scaling out**, in the same spirit as this file's "what
+evidence to look for before extracting anything" section above: if this app is ever
+deployed with more than one running instance in front of the same clients, the
+throttle needs a shared store (`@nestjs/throttler` supports pluggable storage, e.g.
+Redis-backed) before the configured limits mean what they say. Not solved here,
+deliberately — see `docs/phase-8-plan.md` §7 "A shared throttle store."

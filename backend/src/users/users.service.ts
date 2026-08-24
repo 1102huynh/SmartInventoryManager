@@ -4,8 +4,10 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
+import { AppConfig } from '../config/configuration';
 import { EntityStatus } from '../common/enums/entity-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
 import { hashPassword, verifyPassword } from '../common/password';
@@ -22,6 +24,7 @@ export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
+    private readonly configService: ConfigService<AppConfig, true>,
   ) {}
 
   findAll(): Promise<User[]> {
@@ -92,9 +95,17 @@ export class UsersService {
   // The Owner's reset (docs/phase-6-plan.md §1 "PATCH /users/:id/password is a
   // *reset*, not a *recovery*") — no current-password check, because the caller here
   // is an Owner acting on someone else's account, not the account holder.
+  //
+  // Phase 8 (docs/phase-8-plan.md §1 "An Owner's password reset clears the lock"):
+  // this IS the unlock mechanism — clearing the two lock columns on the same save()
+  // rather than adding a separate PATCH /users/:id/unlock route, because that route's
+  // only ever user is an Owner who has already been told to just wait fifteen
+  // minutes. changeOwnPassword below deliberately does NOT do this — see its comment.
   async setPassword(id: number, newPassword: string): Promise<void> {
     const user = await this.findOne(id);
     user.passwordHash = await hashPassword(newPassword);
+    user.failedLoginAttempts = 0;
+    user.lockedUntil = null;
     await this.usersRepository.save(user);
   }
 
@@ -115,6 +126,99 @@ export class UsersService {
     }
     user.passwordHash = await hashPassword(newPassword);
     await this.usersRepository.save(user);
+  }
+
+  // Phase 8 (docs/phase-8-plan.md §1): true only while an unexpired lock is set. NULL,
+  // or a time already in the past, both mean "not locked" — nothing has to sweep
+  // expired locks, this is the one place that interprets the column. Also the read
+  // path for UsersController's Owner-only `locked` boolean (§3) — a presentation of
+  // this same fact, never the raw timestamp.
+  isLocked(user: User): boolean {
+    return !!user.lockedUntil && user.lockedUntil.getTime() > Date.now();
+  }
+
+  // Called from AuthService.validateUser on every failed password check for a KNOWN
+  // user (an unknown email has nothing to count against — see AuthService). Increments
+  // the consecutive-failure counter and, on reaching the configured threshold, sets
+  // lockedUntil — but ONLY if the account isn't already locked.
+  //
+  // That guard is load-bearing, not defensive: without it, a failed attempt against an
+  // ALREADY-locked account would push lockedUntil further into the future every time,
+  // and a script firing one guess a minute would keep the account locked forever —
+  // converting a defensive feature into a permanent, attacker-triggered outage
+  // (docs/phase-8-plan.md §1 "A lock must not become a denial-of-service weapon").
+  // "Reset the timer on every failure" is the intuitive implementation and it is wrong.
+  //
+  // The guard above is not the whole story, though: `isLocked` is false for an
+  // EXPIRED lock too (NULL and "in the past" mean the same thing), and a stale
+  // `failedLoginAttempts` sitting at the threshold would otherwise re-lock the
+  // account on the very next stray failure, over and over, at one request per
+  // window instead of one per minute — the same permanent-outage failure mode
+  // above, just slower and easier to miss. A lock that has actually expired is a
+  // completed lock: the account earns a genuinely fresh count, not a live one
+  // sitting one guess away from re-triggering.
+  async registerFailedLogin(user: User): Promise<void> {
+    if (this.isLocked(user)) return;
+    if (user.lockedUntil) {
+      user.failedLoginAttempts = 0;
+      user.lockedUntil = null;
+    }
+    user.failedLoginAttempts += 1;
+    const threshold = this.configService.get(
+      'security.maxFailedLoginAttempts',
+      {
+        infer: true,
+      },
+    );
+    if (user.failedLoginAttempts >= threshold) {
+      const lockoutMinutes = this.configService.get('security.lockoutMinutes', {
+        infer: true,
+      });
+      user.lockedUntil = new Date(Date.now() + lockoutMinutes * 60_000);
+    }
+    await this.persistLoginState(user);
+  }
+
+  // Called from AuthService.validateUser on every successful login. A clean slate —
+  // consecutive means consecutive, so any success (even the very next attempt after a
+  // string of failures) resets the count, not just an Owner's reset (setPassword,
+  // above).
+  async clearLoginFailures(user: User): Promise<void> {
+    if (user.failedLoginAttempts === 0 && user.lockedUntil === null) return;
+    user.failedLoginAttempts = 0;
+    user.lockedUntil = null;
+    await this.persistLoginState(user);
+  }
+
+  // Deliberately NOT `repository.save()` — the one place in this class that avoids
+  // the pattern every other write method here uses. Phase 7 was explicit that
+  // `updated_at` must mean "this row's own fields were edited," never "something
+  // merely touched it." A failed login attempt is exactly that kind of touch — it
+  // can be fired by a stranger who has never authenticated as anyone — so letting it
+  // move `updated_at` would make the "Last updated" line an Owner reads on a
+  // colleague's account silently mean "the last time someone guessed at this
+  // password," not "the last time I edited this account." setPassword (above) keeps
+  // `save()`, because an Owner's reset genuinely IS an edit to the row.
+  //
+  // Getting this right took a real correction: `repository.update()` does NOT skip
+  // `@UpdateDateColumn` the way `docs/learning-notes/database-access.md` used to
+  // claim — TypeORM's UpdateQueryBuilder auto-appends `SET "updated_at" =
+  // CURRENT_TIMESTAMP` to ANY update whose target columns don't already include the
+  // update-date column, `.update()` included; that "QueryBuilder skips the ORM
+  // lifecycle" folklore turned out to be true for @BeforeUpdate()-style listeners,
+  // not for this specific piece of column metadata. Proven wrong by an e2e test that
+  // failed after switching to `.update()` and finding `updated_at` had moved anyway.
+  // The actual fix, and the reason `updatedAt` appears in the object below: TypeORM
+  // only auto-populates the update-date column when it is ABSENT from the values you
+  // pass — explicitly including it (with its own current, unchanged value) is the
+  // documented way to pin it, so this write pins the old value instead of letting
+  // TypeORM invent a new one.
+  private async persistLoginState(user: User): Promise<void> {
+    await this.usersRepository.update(user.id, {
+      failedLoginAttempts: user.failedLoginAttempts,
+      lockedUntil: user.lockedUntil,
+      updatedAt: user.updatedAt,
+    });
   }
 
   private async assertEmailAvailable(email: string): Promise<void> {
@@ -157,8 +261,14 @@ export class UsersService {
 // accounts — the 409 the DTOs and docs promise on a duplicate email wouldn't actually
 // fire, and only the exact case used at signup could ever log in. Normalizing at the
 // one place email reaches storage (create/update, above) keeps every stored email
-// lowercase, which is what makes the uniqueness check (and login lookup, which was
-// already exact-match) actually mean what it says.
-function normalizeEmail(email: string): string {
+// lowercase, which is what makes the uniqueness check mean what it says.
+//
+// Exported (Phase 8, docs/phase-8-plan.md §1 "the email-casing bug in the function
+// this phase edits"): AuthService.validateUser's login lookup used to compare the raw
+// input against this normalized-at-write value, so "Alex@example.com" could never log
+// in even though "alex@example.com" was the real, stored account — a bug found while
+// reading the code for this phase, not introduced by it, fixed here by giving the
+// login lookup the same normalization instead of duplicating the logic.
+export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }

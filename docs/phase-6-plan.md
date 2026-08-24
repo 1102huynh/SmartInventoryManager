@@ -599,7 +599,11 @@ everything before it can stay.
   (`PATCH /auth/password`), which is a second place to guess at a password. But it is a
   place that already requires a valid token, so it is not an anonymous attack surface,
   and rate limiting is a cross-cutting concern (a global guard or middleware, a store,
-  a policy) that deserves its own phase rather than a corner of this one.
+  a policy) that deserves its own phase rather than a corner of this one. **Done —
+  Phase 8** (`docs/phase-8-plan.md`): a global throttle plus a temporary, self-clearing
+  account lock, with `PATCH /auth/password` throttled but deliberately not
+  lock-eligible, for the exact "already requires a valid token" reason this bullet
+  gave.
 - **`created_at` / `updated_at` on `users`** — the table has never had them, and
   "account created on" is a nice column on a screen, not a requirement. Adding audit
   timestamps is a reasonable small phase of its own, applied consistently, not a rider

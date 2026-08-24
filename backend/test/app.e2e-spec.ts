@@ -3,6 +3,14 @@
 // this has to land first to redirect the whole app at the dedicated e2e database
 // (see tools/README.md) instead of the dev database with its seeded demo data.
 process.env.DB_DATABASE = 'smart_inventory_e2e';
+// Phase 8 (docs/phase-8-plan.md §5/§6): this suite logs in far more often, and far
+// faster, than the production defaults (10 logins / 5 min) allow for — every test's
+// beforeEach logs in as a seeded user, and Jest runs this file's tests back to back
+// in seconds. A generously raised limit here keeps this file exercising its own
+// behavior instead of tripping over Phase 8's throttle; auth.e2e-spec.ts overrides
+// these same variables back down to actually test the throttle and the lockout.
+process.env.THROTTLE_LOGIN_LIMIT = '1000';
+process.env.THROTTLE_LIMIT = '10000';
 
 import {
   ClassSerializerInterceptor,

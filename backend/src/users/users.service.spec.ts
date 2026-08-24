@@ -1,4 +1,9 @@
-import { ConflictException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
@@ -23,6 +28,23 @@ describe('UsersService', () => {
     count: jest.fn(),
     create: jest.fn((v) => v),
     save: jest.fn((v) => Promise.resolve({ id: 1, ...v })),
+    // Phase 8: registerFailedLogin/clearLoginFailures persist via update(), not
+    // save() — deliberately, so a failed login never bumps updated_at (see
+    // UsersService.persistLoginState). Mocked separately so tests can assert the
+    // right ONE of the two was called for a given write.
+    update: jest.fn(),
+  };
+  // Phase 8 (docs/phase-8-plan.md §5): registerFailedLogin reads the threshold and
+  // lockout window from config — real values, not a bare `{}`, so a test that gets
+  // the threshold wrong fails loudly instead of silently comparing against NaN.
+  const MAX_ATTEMPTS = 5;
+  const LOCKOUT_MINUTES = 15;
+  const configService = {
+    get: jest.fn((key: string) => {
+      if (key === 'security.maxFailedLoginAttempts') return MAX_ATTEMPTS;
+      if (key === 'security.lockoutMinutes') return LOCKOUT_MINUTES;
+      throw new Error(`unexpected config key in test: ${key}`);
+    }),
   };
 
   function makeUser(overrides: Partial<User> = {}): User {
@@ -35,6 +57,8 @@ describe('UsersService', () => {
       passwordHash: bcrypt.hashSync('old-password', BCRYPT_ROUNDS),
       createdAt: new Date('2026-08-01T00:00:00Z'),
       updatedAt: new Date('2026-08-01T00:00:00Z'),
+      failedLoginAttempts: 0,
+      lockedUntil: null,
       ...overrides,
     };
   }
@@ -45,6 +69,7 @@ describe('UsersService', () => {
       providers: [
         UsersService,
         { provide: getRepositoryToken(User), useValue: repo },
+        { provide: ConfigService, useValue: configService },
       ],
     }).compile();
     service = moduleRef.get(UsersService);
@@ -130,7 +155,9 @@ describe('UsersService', () => {
       const target = makeUser({ id: 2, email: 'target@example.com' });
       repo.findOne
         .mockResolvedValueOnce(target)
-        .mockResolvedValueOnce(makeUser({ id: 1, email: 'jordan@example.com' }));
+        .mockResolvedValueOnce(
+          makeUser({ id: 1, email: 'jordan@example.com' }),
+        );
       await expect(
         service.update(2, { email: 'JORDAN@EXAMPLE.COM' }),
       ).rejects.toBeInstanceOf(ConflictException);
@@ -232,7 +259,11 @@ describe('UsersService', () => {
     // Owner) and it's untested elsewhere in this file, where every Owner case above
     // deactivates.
     it('reactivating an Owner succeeds and never checks assertOwnerRemains', async () => {
-      const owner = makeUser({ id: 1, role: UserRole.Owner, status: EntityStatus.INACTIVE });
+      const owner = makeUser({
+        id: 1,
+        role: UserRole.Owner,
+        status: EntityStatus.INACTIVE,
+      });
       repo.findOne.mockResolvedValue(owner);
       const result = await service.setStatus(1, EntityStatus.ACTIVE);
       expect(result.status).toBe(EntityStatus.ACTIVE);
@@ -260,6 +291,158 @@ describe('UsersService', () => {
       await expect(
         verifyPassword('new-password-123', user.passwordHash),
       ).resolves.toBe(true);
+    });
+
+    // Phase 8 (docs/phase-8-plan.md §2 "changeOwnPassword — unchanged, deliberately.
+    // It has no lock to clear... and adding one would imply a state that doesn't
+    // exist"): unlike setPassword (an Owner's reset, which IS the unlock mechanism),
+    // this path must NOT touch the lock columns.
+    it('does not touch failedLoginAttempts or lockedUntil', async () => {
+      const user = makeUser({
+        failedLoginAttempts: 3,
+        lockedUntil: new Date(Date.now() + 5 * 60_000),
+      });
+      const originalLockedUntil = user.lockedUntil;
+      repo.findOne.mockResolvedValue(user);
+      await service.changeOwnPassword(1, 'old-password', 'new-password-123');
+      expect(user.failedLoginAttempts).toBe(3);
+      expect(user.lockedUntil).toBe(originalLockedUntil);
+    });
+  });
+
+  describe('setPassword', () => {
+    // Phase 8 (docs/phase-8-plan.md §1 "An Owner's password reset clears the lock"):
+    // this IS the unlock mechanism — no separate PATCH /users/:id/unlock route exists
+    // because this one already does the job.
+    it('clears failedLoginAttempts and lockedUntil, in addition to replacing the hash', async () => {
+      const user = makeUser({
+        failedLoginAttempts: 5,
+        lockedUntil: new Date(Date.now() + 10 * 60_000),
+      });
+      repo.findOne.mockResolvedValue(user);
+      await service.setPassword(1, 'a-new-password');
+      expect(user.failedLoginAttempts).toBe(0);
+      expect(user.lockedUntil).toBeNull();
+      await expect(
+        verifyPassword('a-new-password', user.passwordHash),
+      ).resolves.toBe(true);
+    });
+  });
+
+  describe('isLocked', () => {
+    it('is false when lockedUntil is null', () => {
+      expect(service.isLocked(makeUser({ lockedUntil: null }))).toBe(false);
+    });
+
+    it('is false when lockedUntil is in the past', () => {
+      const past = new Date(Date.now() - 1000);
+      expect(service.isLocked(makeUser({ lockedUntil: past }))).toBe(false);
+    });
+
+    it('is true when lockedUntil is in the future', () => {
+      const future = new Date(Date.now() + 60_000);
+      expect(service.isLocked(makeUser({ lockedUntil: future }))).toBe(true);
+    });
+  });
+
+  describe('registerFailedLogin', () => {
+    it(`sets lockedUntil on the ${MAX_ATTEMPTS}th consecutive failure, not before`, async () => {
+      const user = makeUser({ failedLoginAttempts: MAX_ATTEMPTS - 2 });
+      repo.findOne.mockResolvedValue(user);
+
+      // (N-1)th failure: increments, does NOT lock yet.
+      await service.registerFailedLogin(user);
+      expect(user.failedLoginAttempts).toBe(MAX_ATTEMPTS - 1);
+      expect(user.lockedUntil).toBeNull();
+
+      // Nth failure: locks, roughly LOCKOUT_MINUTES out.
+      await service.registerFailedLogin(user);
+      expect(user.failedLoginAttempts).toBe(MAX_ATTEMPTS);
+      expect(user.lockedUntil).not.toBeNull();
+      const minutesOut = (user.lockedUntil!.getTime() - Date.now()) / 60_000;
+      expect(minutesOut).toBeGreaterThan(LOCKOUT_MINUTES - 1);
+      expect(minutesOut).toBeLessThanOrEqual(LOCKOUT_MINUTES);
+    });
+
+    // Phase 8 (docs/phase-8-plan.md §1 "A lock must not become a denial-of-service
+    // weapon"): the property that stops a lock from being extended forever by an
+    // attacker (or anyone) scripting one guess a minute against an already-locked
+    // account. "Reset the timer on every failure" is the intuitive, WRONG
+    // implementation this test exists to catch.
+    it('leaves lockedUntil unchanged, and never persists anything, when the account is already locked', async () => {
+      const originalLockedUntil = new Date(Date.now() + 5 * 60_000);
+      const user = makeUser({
+        failedLoginAttempts: MAX_ATTEMPTS,
+        lockedUntil: originalLockedUntil,
+      });
+      await service.registerFailedLogin(user);
+      expect(user.lockedUntil).toBe(originalLockedUntil);
+      expect(user.failedLoginAttempts).toBe(MAX_ATTEMPTS); // not incremented either
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    // The bug this test pins: `isLocked` is false for an EXPIRED lock too (that's
+    // the whole point — nothing sweeps expired locks), so without an explicit reset
+    // on the way back in, a stale `failedLoginAttempts` sitting AT the threshold
+    // would re-lock the account on the very next stray failure, forever, at one
+    // request per lockout window instead of one per minute — the same permanent-
+    // outage failure mode the "already locked" guard above exists to prevent, just
+    // slower. An expired lock must give the account a genuinely fresh count.
+    it('resets the counter to a fresh 1 (not 6) on the first failure after a lock has expired', async () => {
+      const user = makeUser({
+        failedLoginAttempts: MAX_ATTEMPTS,
+        lockedUntil: new Date(Date.now() - 1000), // expired one second ago
+      });
+      await service.registerFailedLogin(user);
+      expect(user.failedLoginAttempts).toBe(1);
+      expect(user.lockedUntil).toBeNull(); // one failure, nowhere near the threshold
+      expect(repo.update).toHaveBeenCalledWith(user.id, {
+        failedLoginAttempts: 1,
+        lockedUntil: null,
+        updatedAt: user.updatedAt,
+      });
+    });
+
+    // A failed login must not bump the account's updated_at — it can be fired by a
+    // stranger who never authenticated as anyone, and updated_at is supposed to
+    // mean "this row's own fields were edited." Pinned here at the unit layer by
+    // asserting the write goes through repository.update (never save) AND
+    // explicitly pins updatedAt to its unchanged value (see persistLoginState's
+    // comment for why that pin is necessary — repository.update() alone does NOT
+    // skip the auto-bump the way it's sometimes assumed to); the e2e layer proves
+    // the real column doesn't move on a real database.
+    it('persists via repository.update, never repository.save, and pins updatedAt to its current value', async () => {
+      const user = makeUser({ failedLoginAttempts: 0 });
+      await service.registerFailedLogin(user);
+      expect(repo.update).toHaveBeenCalledWith(
+        user.id,
+        expect.objectContaining({ updatedAt: user.updatedAt }),
+      );
+      expect(repo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('clearLoginFailures', () => {
+    it('zeroes the counter and nulls lockedUntil, via repository.update (never save — see registerFailedLogin)', async () => {
+      const user = makeUser({
+        failedLoginAttempts: 3,
+        lockedUntil: new Date(Date.now() + 5 * 60_000),
+      });
+      await service.clearLoginFailures(user);
+      expect(user.failedLoginAttempts).toBe(0);
+      expect(user.lockedUntil).toBeNull();
+      expect(repo.update).toHaveBeenCalledWith(user.id, {
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+        updatedAt: user.updatedAt,
+      });
+      expect(repo.save).not.toHaveBeenCalled();
+    });
+
+    it('is a no-op (no persistence call) when there is nothing to clear', async () => {
+      const user = makeUser({ failedLoginAttempts: 0, lockedUntil: null });
+      await service.clearLoginFailures(user);
+      expect(repo.update).not.toHaveBeenCalled();
     });
   });
 });

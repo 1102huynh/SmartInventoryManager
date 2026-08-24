@@ -351,6 +351,10 @@ Steps 1–3 are individually shippable no-ops, which is the point: if something 
   mattered; Phase 3's "no revocation list" decision stands otherwise.
 - **Rate limiting, audit log of denied attempts, account lockout** — adjacent
   security work, none of it asked for, none of it required by the two-role split.
+  **Rate limiting and account lockout: done, Phase 8** (`docs/phase-8-plan.md`). An
+  audit log of denied attempts is still open — a genuinely different feature (who
+  tried, when, from where, and a screen to read it on), not a byproduct of the
+  counter columns Phase 8 added.
 
 ---
 

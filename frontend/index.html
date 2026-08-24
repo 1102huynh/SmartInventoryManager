@@ -409,6 +409,14 @@ const Store = {
     // already surface as an inline/toast error. Do not fold this into the 401
     // branch above: that would log a Staff user out for clicking something they
     // merely can't do.
+    //
+    // A 429 (rate limiting, Phase 8, docs/phase-8-plan.md §3) needs exactly the same
+    // protection, for exactly the same reason — the session is fine, the server is
+    // just saying "slow down." It also falls through to the generic throw below,
+    // whose message is the server's own ("Too many requests…"), including on
+    // POST /auth/login, where it renders inline on the login form the same way a
+    // wrong password does (a locked-account 401 already works this way — see
+    // Views.login). Do not fold this into the 401 branch either.
     if (!res.ok){
       const message = data && (Array.isArray(data.message) ? data.message.join(' ') : data.message);
       throw new Error(message || `Request failed (${res.status}).`);
@@ -692,6 +700,15 @@ const UI = {
     return status === 'active'
       ? '<span class="badge badge-active">Active</span>'
       : '<span class="badge badge-inactive">Inactive</span>';
+  },
+  // Phase 8 (docs/phase-8-plan.md §3): a locked account is a DIFFERENT state from
+  // Inactive (an Owner deactivated it) — this shows up next to the status badge, not
+  // instead of it, so the two never get confused when an Owner is looking at "why
+  // can't this person log in." Only meaningful when `locked` is actually present on
+  // the user object (the Owner-only GET /users shape) — every other caller of this
+  // just sees no badge, no error.
+  badgeLocked(locked){
+    return locked ? '<span class="badge badge-out">Locked</span>' : '';
   },
   // Out-of-stock is the more severe subset of low-stock — showing only one badge keeps
   // the signal legible instead of stacking two chips that mean almost the same thing.
@@ -2216,7 +2233,7 @@ Views.userList = function(container, query){
       <td class="cell-name">${UI.esc(u.name)} ${isSelf ? '<span class="badge badge-inactive">You</span>' : ''}</td>
       <td class="cell-sub">${UI.esc(u.email)}</td>
       <td>${UI.esc(ROLE_LABEL[u.role] || u.role)}</td>
-      <td>${UI.badgeStatus(u.status)}</td>
+      <td>${UI.badgeStatus(u.status)} ${UI.badgeLocked(u.locked)}</td>
       <td>${actions}</td>
     </tr>`;
   }

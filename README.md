@@ -35,7 +35,11 @@ npm run seed               # only needed once, or to reset demo data
 npm run start:dev
 ```
 
-The API listens on `http://localhost:3000`.
+The API listens on `http://localhost:3000`. It runs directly (no reverse proxy) in
+this setup, so `req.ip` is honest — if this is ever deployed behind a load balancer
+or reverse proxy, Express needs `app.set('trust proxy', ...)` first, or every request
+will appear to come from the proxy's one address and Phase 8's rate limiting will
+lock out the world.
 
 **Signing in:** every route except `POST /auth/login` now requires a token (see
 `docs/phase-3-plan.md`). Every seeded demo user (`npm run seed`) shares one dev-only
@@ -51,6 +55,15 @@ password:
 Riley is seeded deactivated on purpose, to demonstrate the Users screen's inactive
 state out of the box — signing in as Riley is expected to fail with "This account has
 been deactivated," not a broken seed.
+
+**Login is rate-limited and repeats-locked** (`docs/phase-8-plan.md`): five wrong
+passwords in a row locks that account for fifteen minutes — that's the feature
+working, not a broken seed, if you fat-finger `password123` a few times while
+testing. The lock clears itself automatically, or an Owner can clear it immediately
+by resetting that account's password from the Users screen. Requests are also capped
+per address (a generous global limit, a tighter one on `/auth/login` and
+`/auth/password`) — see `docs/api.md`'s `429` section if you ever see "Too many
+requests" while developing.
 
 Only `alex@example.com` (Owner) can create/edit/deactivate/delete products,
 suppliers, and categories (`docs/phase-5-plan.md`) — signing in as Jordan or Sam
@@ -82,19 +95,26 @@ See `docs/learning-notes/testing-strategy.md` for what each of these actually pr
 
 ## Current phase
 
-Phase 7 — Audit timestamps (`docs/phase-7-plan.md`): `users` and `categories` now
-carry `created_at`/`updated_at`, closing the last gap in a convention `products` and
-`suppliers` have had since day one. `inventory_transactions` deliberately keeps
-`created_at` only — those rows are immutable (BR-051), so there's nothing an
-`updated_at` could ever record. No new FR; this is data-model consistency, not a new
-capability. The product/supplier/user detail and edit views now show "Added" and
-"Last updated" dates where the data supports it. See `domain-model.md` §8 for the
-full convention.
+Phase 8 — Login rate limiting & account lockout (`docs/phase-8-plan.md`): repeated
+failed logins are now expensive. A global request throttle sits in front of every
+route (generous defaults), with a much tighter limit on `POST /auth/login` and
+`PATCH /auth/password`; five consecutive failed logins temporarily lock that account
+for fifteen minutes, self-clearing, no Owner action required (though an Owner's
+password reset also clears it immediately). Neither mechanism reveals whether an
+account exists to an unauthenticated caller — a locked or deactivated account's
+specific message is only reachable with the *correct* password. No new FR; this
+hardens FR-060, it doesn't extend it. See `business-rules.md` BR-079–081 and
+`docs/learning-notes/authentication-and-guards.md` for the "rate limiting vs.
+lockout" distinction.
 
-Earlier phases: Phase 6 (`docs/phase-6-plan.md`) made users a managed resource — an
-Owner can create, edit, deactivate/reactivate, and reset the password of any account
-through the UI, no more `psql` required; every user can change their own password.
-FR-063 and FR-064 Done. Phase 5 (`docs/phase-5-plan.md`) enforced the `role` field — Owner and
+Earlier phases: Phase 7 (`docs/phase-7-plan.md`) gave `users` and `categories`
+`created_at`/`updated_at`, closing the last gap in a convention `products` and
+`suppliers` have had since day one — `inventory_transactions` deliberately keeps
+`created_at` only (BR-051's immutability). Phase 6 (`docs/phase-6-plan.md`) made
+users a managed resource — an Owner can create, edit, deactivate/reactivate, and
+reset the password of any account through the UI, no more `psql` required; every
+user can change their own password. FR-063 and FR-064 Done. Phase 5
+(`docs/phase-5-plan.md`) enforced the `role` field — Owner and
 Staff, Owner required for Product/Supplier/Category writes, every other authenticated
 action open to both. FR-062 Done. Phase 4 (`docs/phase-4-plan.md`) added Category
 CRUD, FR-005 Done. Phase 3 (`docs/phase-3-plan.md`) added JWT authentication — real

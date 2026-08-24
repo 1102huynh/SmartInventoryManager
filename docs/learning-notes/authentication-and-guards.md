@@ -170,6 +170,98 @@ that's invisible from reading either Guard's code in isolation — nothing about
 registration site in `auth.module.ts` is the only thing that makes it visible, which is
 why it's there.
 
+**A third guard, and a third reason order matters (Phase 8).** `AppThrottlerGuard`
+(`backend/src/auth/app-throttler.guard.ts`) joins the array as the **first** of
+three:
+
+```ts
+providers: [
+  // ...
+  { provide: APP_GUARD, useClass: AppThrottlerGuard }, // 1st
+  { provide: APP_GUARD, useClass: JwtAuthGuard },       // 2nd
+  { provide: APP_GUARD, useClass: RolesGuard },         // 3rd
+]
+```
+
+The reasoning is different from *why* `JwtAuthGuard` precedes `RolesGuard` (a data
+dependency — one guard populates what the next one reads) but the *shape* of the
+lesson is the same: **global guard order is a real API of the providers array, not
+an implementation detail**, and here it's a cost-ordering argument instead of a
+data-ordering one. A flood of requests should be rejected as cheaply as possible —
+before a database lookup (`JwtAuthGuard`/`JwtStrategy.validate`), and certainly
+before a `bcrypt` comparison (`AuthController.login`). A throttler registered *after*
+`JwtAuthGuard` would still let every request in a flood pay for that lookup before
+being rejected; registered after `RolesGuard` too, it would pay for a role check as
+well. Registering it first means an over-limit request never reaches either.
+
+## Rate limiting vs. account lockout — two different questions (Phase 8)
+
+Easy to conflate, because both react to "too many login attempts," but they answer
+different questions and neither substitutes for the other:
+
+| | Request throttle | Account lockout |
+|---|---|---|
+| Question | *How fast can anyone try?* | *How many times can one account fail in a row?* |
+| Scope | Per client address, per route | Per account, follows it across addresses |
+| Protects | The server (CPU, connections) | The user (their specific account) |
+| Storage | In-memory (`ThrottlerModule`) | Postgres (`users.failed_login_attempts`/`locked_until`) |
+| Beaten by | An attacker who is patient or distributed | A password-spray attack (one guess each, across many accounts) |
+
+A throttle alone is beaten by an attacker willing to go slow, or to spread requests
+across many source addresses. A lock alone lets someone hammer the login endpoint at
+full speed across *many different accounts* — one guess each, never triggering any
+single account's threshold — which is a more realistic attack against a small
+business than a deep brute force against one inbox. The two compose: the throttle
+caps the *rate* regardless of which account is targeted, the lock caps the *damage*
+to any one account regardless of how the attempts are spread out in time.
+
+One more thing the pairing buys for free: the throttle also pays for the lock's one
+real cost. `AuthService.validateUser` still runs `bcrypt.compare()` even for an
+account that's already locked (see the ordering rule below for why it has to), which
+means a locked account still burns real CPU per attempt — that's exactly the cost
+the request throttle exists to cap, by rejecting a flood before it ever reaches that
+comparison at all.
+
+## The enumeration-ordering rule, generalized
+
+Phase 6 introduced a rule for the deactivated-account message: `AuthService.validateUser`
+checks `user.status` strictly *after* `verifyPassword` has already succeeded, never
+before. Phase 8's lock check follows the identical shape, immediately after it:
+
+```ts
+const user = await this.usersRepository.findOne({ where: { email: normalizeEmail(email) } });
+if (!user) return null;                              // unknown email → generic 401
+const matches = await verifyPassword(password, user.passwordHash);
+if (!matches) {                                       // wrong password → generic 401
+  await this.usersService.registerFailedLogin(user);
+  return null;
+}
+if (user.status === EntityStatus.INACTIVE) throw /* deactivated message */;
+if (this.usersService.isLocked(user)) throw /* lock message, with minutes remaining */;
+await this.usersService.clearLoginFailures(user);
+return user;
+```
+
+Two instances of the same check are worth stating as the general rule they actually
+are: **a specific, informative failure message is safe to show exactly when reaching
+it requires knowledge the caller doesn't have.** Both the deactivated message and the
+lock message are only reachable *after* the correct password has already been
+supplied — so an attacker who doesn't know the password can never distinguish "wrong
+password," "unknown email," "deactivated," or "locked" from each other; all four
+collapse to the same generic `401` from the outside. A caller who *does* know the
+password gets the specific, useful message, because at that point they've already
+proven they're not an anonymous enumerator. The rule generalizes to any future
+account-state check this function might grow: put it after the password comparison,
+never before, or it becomes a way to probe which emails exist without ever guessing
+a password right.
+
+An easy mistake this rule specifically forecloses: registering a failed login (the
+counter that can eventually lock the account) *before* checking whether the password
+even matched. `registerFailedLogin` only ever runs in the `!matches` branch — an
+attacker who already knows the correct password, and is only being blocked by
+`status`/lock, never adds to that counter, because they didn't fail. Only an actual
+wrong guess counts as a failure.
+
 **`@Roles()` is default-open; the absence of `@Public()` is default-closed — and
 that's intentional, not inconsistent.** `@Public()` marks the *rare* exception (one
 route, `POST /auth/login`) against a *strict* default (every route needs a token) — so
@@ -343,6 +435,17 @@ succeeds.
 - Registering `RolesGuard` before `JwtAuthGuard` in the `APP_GUARD` providers array —
   it would run first, see no `request.user` yet, and deny every request regardless of
   token validity. Order in that array is the order Nest runs global guards in.
+- Registering `AppThrottlerGuard` anywhere but first — a flood would still pay for a
+  database lookup (`JwtAuthGuard`) or a role check (`RolesGuard`) before being
+  rejected, defeating the point of rejecting it cheaply (Phase 8).
+- Checking `isLocked(user)` (or `status`) *before* `verifyPassword` "to save a hash
+  comparison" — it looks like a harmless optimization and it reopens the exact
+  enumeration hole Phase 3 closed: an attacker could then tell a locked/deactivated
+  account from an unknown email without ever guessing the password.
+- Letting a failed attempt against an *already-locked* account extend the lock (e.g.
+  "reset the timer on every failure") — the intuitive implementation, and wrong: it
+  turns a defensive feature into a permanent, attacker-triggered outage. A lock must
+  have a fixed expiry set once, not a rolling one.
 - Putting the role in a JWT's payload and skipping the database lookup, to save a query —
   cheaper, but means a demoted user keeps their old role's powers until their token
   expires, since nothing forces re-issuing a token on a role change. This project reads
@@ -390,3 +493,14 @@ succeeds.
   hook a later, unrelated feature (session revocation on deactivation) attaches to for
   free — worth checking what an existing design decision already bought before
   assuming a new requirement needs new infrastructure.
+- Global guard order is a real API, not an implementation detail — it can encode a
+  *data* dependency (`RolesGuard` needs what `JwtAuthGuard` populates) or a *cost*
+  dependency (`AppThrottlerGuard` should reject cheaply before anything expensive
+  runs); both are reasons order matters, and neither is visible from reading one
+  guard's code in isolation.
+- Rate limiting and account lockout answer different questions and neither
+  substitutes for the other — a throttle caps *how fast anyone can try*; a lock caps
+  *how many times one account can fail in a row*. Combine them; don't pick one.
+- A specific, informative error message is safe to show exactly when reaching it
+  requires knowledge an attacker doesn't have (the password) — generalize this rule
+  to every account-state check a login function grows, not just the first one.

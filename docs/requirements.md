@@ -77,7 +77,7 @@ must satisfy.
 
 | ID | Name | Description | Priority | Notes / Assumptions |
 |---|---|---|---|---|
-| FR-060 | User login | A user must authenticate to use the system. | Must | **Done** (Phase 3) — JWT login (`POST /auth/login`), every write behind a global guard. RBAC done in Phase 5 — see FR-062. |
+| FR-060 | User login | A user must authenticate to use the system. | Must | **Done** (Phase 3) — JWT login (`POST /auth/login`), every write behind a global guard. RBAC done in Phase 5 — see FR-062. Login is rate-limited and repeated failures temporarily lock an account (Phase 8, BR-079–081) — see the note below; this hardens FR-060, it doesn't extend it. |
 | FR-061 | Attribute transactions to user | Every stock-in, stock-out, and adjustment records which user performed it. | Must | Supports auditability, BR-050 |
 | FR-062 | Role-based authorization | A user is either Owner or Staff (BR-070). Creating, editing, deactivating, or deleting a Product, Supplier, or Category requires the Owner role; every read and every stock-in/out/adjustment is available to both roles. | Must | **Done** (Phase 5) — `RolesGuard` + `@Roles()`, enforced server-side; the frontend hides actions a Staff user can't perform. See BR-070–073 and `docs/phase-5-plan.md`. Roles are now assigned through account management — see FR-063. |
 | FR-063 | Manage user accounts | An Owner can create a user account, edit its name/email/role, deactivate and reactivate it, and reset its password. | Should | **Done** (Phase 6) — `POST`/`PATCH /users/:id`/`PATCH /users/:id/status`/`PATCH /users/:id/password`, all Owner-only (BR-074). Not Must: `product.md` §7's MVP list doesn't include user administration, and the system is fully functional with seed-provisioned accounts — this closes an operability gap, not an MVP correctness gap. See `docs/phase-6-plan.md`. |
@@ -92,6 +92,17 @@ new capability — "when was this row written" is not a user goal in `product.md
 so no FR is added for it. The capability it *enables* (showing "Added on" / "Last
 updated" on a detail view, which the frontend now does for products, suppliers, and
 users) is noted here as available to future work, not tracked as its own requirement.
+
+## Authentication Hardening (Phase 8 — no new FR)
+
+Phase 8 (`docs/phase-8-plan.md`) added a per-address request throttle and a
+temporary, self-clearing account lock after repeated failed logins. Like Phase 7's
+audit timestamps, this adds no new FR: nobody's job is "resist password guessing,"
+and `product.md` §4 names no such user goal. The capability is that logging in keeps
+working for a legitimate user while attacking it stops working — a security
+hardening of FR-060, not a new requirement. The rules themselves live in
+`business-rules.md` as BR-079–081, the same place BR-074–078 recorded Phase 6's
+authentication and account rules.
 
 ## Cross-Reference Summary
 

@@ -7,6 +7,8 @@ import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
+import { AuditService } from '../audit/audit.service';
+import { AuditEventType } from '../common/enums/audit-event-type.enum';
 import { EntityStatus } from '../common/enums/entity-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
 import { BCRYPT_ROUNDS, verifyPassword } from '../common/password';
@@ -46,6 +48,11 @@ describe('UsersService', () => {
       throw new Error(`unexpected config key in test: ${key}`);
     }),
   };
+  // Phase 9 (docs/phase-9-plan.md §5): mocked the same way as auth.service.spec.ts —
+  // this file only needs to prove UsersService calls record() with the right
+  // actor/subject/summary, not re-verify AuditService's own persistence.
+  const auditService = { record: jest.fn() };
+  const ACTOR_ID = 99; // the Owner performing an administrative write in these tests
 
   function makeUser(overrides: Partial<User> = {}): User {
     return {
@@ -70,6 +77,7 @@ describe('UsersService', () => {
         UsersService,
         { provide: getRepositoryToken(User), useValue: repo },
         { provide: ConfigService, useValue: configService },
+        { provide: AuditService, useValue: auditService },
       ],
     }).compile();
     service = moduleRef.get(UsersService);
@@ -87,12 +95,15 @@ describe('UsersService', () => {
   describe('create', () => {
     it('stores a bcrypt hash, never the plaintext password', async () => {
       repo.findOne.mockResolvedValue(null); // no existing email
-      const created = await service.create({
-        name: 'New Hire',
-        email: 'new@example.com',
-        role: UserRole.Staff,
-        password: 'a-real-password',
-      });
+      const created = await service.create(
+        {
+          name: 'New Hire',
+          email: 'new@example.com',
+          role: UserRole.Staff,
+          password: 'a-real-password',
+        },
+        ACTOR_ID,
+      );
       expect(created.passwordHash).not.toBe('a-real-password');
       await expect(
         verifyPassword('a-real-password', created.passwordHash),
@@ -102,12 +113,15 @@ describe('UsersService', () => {
     it('throws ConflictException on a duplicate email', async () => {
       repo.findOne.mockResolvedValue(makeUser());
       await expect(
-        service.create({
-          name: 'Duplicate',
-          email: 'jordan@example.com',
-          role: UserRole.Staff,
-          password: 'a-real-password',
-        }),
+        service.create(
+          {
+            name: 'Duplicate',
+            email: 'jordan@example.com',
+            role: UserRole.Staff,
+            password: 'a-real-password',
+          },
+          ACTOR_ID,
+        ),
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
@@ -117,12 +131,15 @@ describe('UsersService', () => {
     it('treats a duplicate email as a duplicate regardless of case, and stores it lowercased', async () => {
       repo.findOne.mockResolvedValue(makeUser({ email: 'jordan@example.com' }));
       await expect(
-        service.create({
-          name: 'Duplicate',
-          email: 'Jordan@Example.com',
-          role: UserRole.Staff,
-          password: 'a-real-password',
-        }),
+        service.create(
+          {
+            name: 'Duplicate',
+            email: 'Jordan@Example.com',
+            role: UserRole.Staff,
+            password: 'a-real-password',
+          },
+          ACTOR_ID,
+        ),
       ).rejects.toBeInstanceOf(ConflictException);
       expect(repo.findOne).toHaveBeenCalledWith({
         where: { email: 'jordan@example.com' },
@@ -130,13 +147,38 @@ describe('UsersService', () => {
 
       jest.clearAllMocks();
       repo.findOne.mockResolvedValue(null);
-      const created = await service.create({
-        name: 'New Hire',
-        email: '  NewHire@Example.com  ',
-        role: UserRole.Staff,
-        password: 'a-real-password',
-      });
+      const created = await service.create(
+        {
+          name: 'New Hire',
+          email: '  NewHire@Example.com  ',
+          role: UserRole.Staff,
+          password: 'a-real-password',
+        },
+        ACTOR_ID,
+      );
       expect(created.email).toBe('newhire@example.com');
+    });
+
+    // Phase 9 (docs/phase-9-plan.md §2 "each write method records its event with the
+    // actor it was passed").
+    it('records user_created with the actor and the new user as subject', async () => {
+      repo.findOne.mockResolvedValue(null);
+      const created = await service.create(
+        {
+          name: 'New Hire',
+          email: 'new@example.com',
+          role: UserRole.Staff,
+          password: 'a-real-password',
+        },
+        ACTOR_ID,
+      );
+      expect(auditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: AuditEventType.USER_CREATED,
+          actorUserId: ACTOR_ID,
+          subjectUserId: created.id,
+        }),
+      );
     });
   });
 
@@ -147,7 +189,7 @@ describe('UsersService', () => {
         .mockResolvedValueOnce(target) // findOne(id) inside update()
         .mockResolvedValueOnce(makeUser({ id: 1 })); // assertEmailAvailable finds a clash
       await expect(
-        service.update(2, { email: 'jordan@example.com' }),
+        service.update(2, { email: 'jordan@example.com' }, ACTOR_ID),
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
@@ -159,14 +201,18 @@ describe('UsersService', () => {
           makeUser({ id: 1, email: 'jordan@example.com' }),
         );
       await expect(
-        service.update(2, { email: 'JORDAN@EXAMPLE.COM' }),
+        service.update(2, { email: 'JORDAN@EXAMPLE.COM' }, ACTOR_ID),
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
     it('does not re-check availability when the email is unchanged apart from case', async () => {
       const target = makeUser({ id: 2, email: 'target@example.com' });
       repo.findOne.mockResolvedValueOnce(target);
-      const result = await service.update(2, { email: 'Target@Example.com' });
+      const result = await service.update(
+        2,
+        { email: 'Target@Example.com' },
+        ACTOR_ID,
+      );
       expect(result.email).toBe('target@example.com');
       expect(repo.findOne).toHaveBeenCalledTimes(1); // only the initial findOne(id) — no availability check
     });
@@ -176,7 +222,7 @@ describe('UsersService', () => {
       repo.findOne.mockResolvedValue(owner);
       repo.count.mockResolvedValue(0); // no other active Owner
       await expect(
-        service.update(1, { role: UserRole.Staff }),
+        service.update(1, { role: UserRole.Staff }, ACTOR_ID),
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
@@ -184,7 +230,11 @@ describe('UsersService', () => {
       const owner = makeUser({ id: 1, role: UserRole.Owner });
       repo.findOne.mockResolvedValue(owner);
       repo.count.mockResolvedValue(1); // one other active Owner
-      const result = await service.update(1, { role: UserRole.Staff });
+      const result = await service.update(
+        1,
+        { role: UserRole.Staff },
+        ACTOR_ID,
+      );
       expect(result.role).toBe(UserRole.Staff);
     });
 
@@ -200,14 +250,18 @@ describe('UsersService', () => {
         Promise.resolve(where.status === EntityStatus.ACTIVE ? 0 : 1),
       );
       await expect(
-        service.update(1, { role: UserRole.Staff }),
+        service.update(1, { role: UserRole.Staff }, ACTOR_ID),
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
     it('promoting Staff to Owner never checks assertOwnerRemains', async () => {
       const staff = makeUser({ id: 3, role: UserRole.Staff });
       repo.findOne.mockResolvedValue(staff);
-      const result = await service.update(3, { role: UserRole.Owner });
+      const result = await service.update(
+        3,
+        { role: UserRole.Owner },
+        ACTOR_ID,
+      );
       expect(result.role).toBe(UserRole.Owner);
       expect(repo.count).not.toHaveBeenCalled();
     });
@@ -222,10 +276,30 @@ describe('UsersService', () => {
     it('persists a change via repository.save on the loaded entity', async () => {
       const target = makeUser({ id: 2, name: 'Old Name' });
       repo.findOne.mockResolvedValue(target);
-      await service.update(2, { name: 'New Name' });
+      await service.update(2, { name: 'New Name' }, ACTOR_ID);
       expect(repo.save).toHaveBeenCalledWith(
         expect.objectContaining({ id: 2, name: 'New Name' }),
       );
+    });
+
+    it('records user_updated naming the actor and the edited user as subject, only when something changed', async () => {
+      const target = makeUser({ id: 2, name: 'Old Name' });
+      repo.findOne.mockResolvedValue(target);
+      await service.update(2, { name: 'New Name' }, ACTOR_ID);
+      expect(auditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: AuditEventType.USER_UPDATED,
+          actorUserId: ACTOR_ID,
+          subjectUserId: 2,
+        }),
+      );
+    });
+
+    it('does not record an event for a no-op update', async () => {
+      const target = makeUser({ id: 2, name: 'Same Name' });
+      repo.findOne.mockResolvedValue(target);
+      await service.update(2, { name: 'Same Name' }, ACTOR_ID);
+      expect(auditService.record).not.toHaveBeenCalled();
     });
   });
 
@@ -235,7 +309,7 @@ describe('UsersService', () => {
       repo.findOne.mockResolvedValue(owner);
       repo.count.mockResolvedValue(0);
       await expect(
-        service.setStatus(1, EntityStatus.INACTIVE),
+        service.setStatus(1, EntityStatus.INACTIVE, ACTOR_ID),
       ).rejects.toBeInstanceOf(ConflictException);
     });
 
@@ -243,14 +317,18 @@ describe('UsersService', () => {
       const owner = makeUser({ id: 1, role: UserRole.Owner });
       repo.findOne.mockResolvedValue(owner);
       repo.count.mockResolvedValue(1);
-      const result = await service.setStatus(1, EntityStatus.INACTIVE);
+      const result = await service.setStatus(
+        1,
+        EntityStatus.INACTIVE,
+        ACTOR_ID,
+      );
       expect(result.status).toBe(EntityStatus.INACTIVE);
     });
 
     it('deactivating a Staff member never checks assertOwnerRemains', async () => {
       const staff = makeUser({ id: 2, role: UserRole.Staff });
       repo.findOne.mockResolvedValue(staff);
-      await service.setStatus(2, EntityStatus.INACTIVE);
+      await service.setStatus(2, EntityStatus.INACTIVE, ACTOR_ID);
       expect(repo.count).not.toHaveBeenCalled();
     });
 
@@ -265,9 +343,23 @@ describe('UsersService', () => {
         status: EntityStatus.INACTIVE,
       });
       repo.findOne.mockResolvedValue(owner);
-      const result = await service.setStatus(1, EntityStatus.ACTIVE);
+      const result = await service.setStatus(1, EntityStatus.ACTIVE, ACTOR_ID);
       expect(result.status).toBe(EntityStatus.ACTIVE);
       expect(repo.count).not.toHaveBeenCalled();
+    });
+
+    it('records user_status_changed with the actor and the affected user as subject', async () => {
+      const staff = makeUser({ id: 2, role: UserRole.Staff });
+      repo.findOne.mockResolvedValue(staff);
+      await service.setStatus(2, EntityStatus.INACTIVE, ACTOR_ID);
+      expect(auditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: AuditEventType.USER_STATUS_CHANGED,
+          actorUserId: ACTOR_ID,
+          subjectUserId: 2,
+          summary: 'Deactivated',
+        }),
+      );
     });
   });
 
@@ -308,6 +400,31 @@ describe('UsersService', () => {
       expect(user.failedLoginAttempts).toBe(3);
       expect(user.lockedUntil).toBe(originalLockedUntil);
     });
+
+    // Phase 9 (docs/phase-9-plan.md §1 "one inclusion worth defending:
+    // password_changed"): actor and subject are the SAME id here, deliberately — the
+    // one case where they legitimately coincide.
+    it('records password_changed with actor and subject both the caller', async () => {
+      const user = makeUser();
+      repo.findOne.mockResolvedValue(user);
+      await service.changeOwnPassword(1, 'old-password', 'new-password-123');
+      expect(auditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: AuditEventType.PASSWORD_CHANGED,
+          actorUserId: 1,
+          subjectUserId: 1,
+        }),
+      );
+    });
+
+    it('does not record anything on a wrong current password', async () => {
+      const user = makeUser();
+      repo.findOne.mockResolvedValue(user);
+      await expect(
+        service.changeOwnPassword(1, 'wrong-current', 'new-password-123'),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(auditService.record).not.toHaveBeenCalled();
+    });
   });
 
   describe('setPassword', () => {
@@ -320,12 +437,43 @@ describe('UsersService', () => {
         lockedUntil: new Date(Date.now() + 10 * 60_000),
       });
       repo.findOne.mockResolvedValue(user);
-      await service.setPassword(1, 'a-new-password');
+      await service.setPassword(1, 'a-new-password', ACTOR_ID);
       expect(user.failedLoginAttempts).toBe(0);
       expect(user.lockedUntil).toBeNull();
       await expect(
         verifyPassword('a-new-password', user.passwordHash),
       ).resolves.toBe(true);
+    });
+
+    it('records user_password_reset with the actor and target as subject, never anything about either password', async () => {
+      const user = makeUser();
+      repo.findOne.mockResolvedValue(user);
+      await service.setPassword(1, 'a-new-password', ACTOR_ID);
+      const call = auditService.record.mock.calls.find(
+        (c) => c[0].eventType === AuditEventType.USER_PASSWORD_RESET,
+      );
+      expect(call[0].actorUserId).toBe(ACTOR_ID);
+      expect(call[0].subjectUserId).toBe(1);
+      expect(call[0].summary).not.toMatch(/a-new-password/);
+    });
+
+    it('notes the lock was cleared in the summary only when a lock actually existed', async () => {
+      const lockedUser = makeUser({
+        lockedUntil: new Date(Date.now() + 10 * 60_000),
+      });
+      repo.findOne.mockResolvedValue(lockedUser);
+      await service.setPassword(1, 'a-new-password', ACTOR_ID);
+      expect(auditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({ summary: expect.stringMatching(/lock cleared/i) }),
+      );
+
+      jest.clearAllMocks();
+      const unlockedUser = makeUser({ lockedUntil: null });
+      repo.findOne.mockResolvedValue(unlockedUser);
+      await service.setPassword(1, 'a-new-password', ACTOR_ID);
+      expect(auditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({ summary: 'Password reset by an Owner' }),
+      );
     });
   });
 
@@ -362,6 +510,33 @@ describe('UsersService', () => {
       const minutesOut = (user.lockedUntil!.getTime() - Date.now()) / 60_000;
       expect(minutesOut).toBeGreaterThan(LOCKOUT_MINUTES - 1);
       expect(minutesOut).toBeLessThanOrEqual(LOCKOUT_MINUTES);
+    });
+
+    // Phase 9 (docs/phase-9-plan.md §5 "account_locked is recorded exactly once, on
+    // the failure that crosses the threshold — not on the (N-1)th, and NOT on a
+    // subsequent failure while already locked"). This is the pin that ties §1's
+    // once-per-lock semantics to Phase 8's early return: a change to either notices
+    // the other.
+    it(`records account_locked exactly once, on the ${MAX_ATTEMPTS}th failure — not the (N-1)th, and not again while already locked`, async () => {
+      const user = makeUser({ failedLoginAttempts: MAX_ATTEMPTS - 2 });
+      repo.findOne.mockResolvedValue(user);
+
+      await service.registerFailedLogin(user, '203.0.113.7'); // (N-1)th
+      expect(auditService.record).not.toHaveBeenCalled();
+
+      await service.registerFailedLogin(user, '203.0.113.7'); // Nth: crosses the threshold
+      expect(auditService.record).toHaveBeenCalledTimes(1);
+      expect(auditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: AuditEventType.ACCOUNT_LOCKED,
+          subjectUserId: user.id,
+          actorIp: '203.0.113.7',
+        }),
+      );
+
+      jest.clearAllMocks();
+      await service.registerFailedLogin(user, '203.0.113.7'); // still locked: early return
+      expect(auditService.record).not.toHaveBeenCalled();
     });
 
     // Phase 8 (docs/phase-8-plan.md §1 "A lock must not become a denial-of-service

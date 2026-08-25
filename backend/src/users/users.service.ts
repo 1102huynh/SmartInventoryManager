@@ -7,7 +7,10 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Not, Repository } from 'typeorm';
+import { AuditService } from '../audit/audit.service';
 import { AppConfig } from '../config/configuration';
+import { AuditEntityType } from '../common/enums/audit-entity-type.enum';
+import { AuditEventType } from '../common/enums/audit-event-type.enum';
 import { EntityStatus } from '../common/enums/entity-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
 import { hashPassword, verifyPassword } from '../common/password';
@@ -25,6 +28,7 @@ export class UsersService {
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
     private readonly configService: ConfigService<AppConfig, true>,
+    private readonly auditService: AuditService,
   ) {}
 
   findAll(): Promise<User[]> {
@@ -37,7 +41,10 @@ export class UsersService {
     return user;
   }
 
-  async create(dto: CreateUserDto): Promise<User> {
+  // Phase 9 (docs/phase-9-plan.md §2): actorId is the Owner performing this create —
+  // threaded from UsersController via @CurrentUserId(), the InventoryService
+  // precedent for a service method that needs to know who's calling it.
+  async create(dto: CreateUserDto, actorId: number): Promise<User> {
     const email = normalizeEmail(dto.email);
     await this.assertEmailAvailable(email);
     const passwordHash = await hashPassword(dto.password);
@@ -47,7 +54,16 @@ export class UsersService {
       role: dto.role,
       passwordHash,
     });
-    return this.usersRepository.save(user);
+    const saved = await this.usersRepository.save(user);
+    await this.auditService.record({
+      eventType: AuditEventType.USER_CREATED,
+      actorUserId: actorId,
+      subjectUserId: saved.id,
+      entityType: AuditEntityType.USER,
+      entityId: saved.id,
+      summary: `Created with role ${saved.role}`,
+    });
+    return saved;
   }
 
   // name / email / role only — never password (see SetUserPasswordDto /
@@ -55,29 +71,53 @@ export class UsersService {
   // here, on the role branch, rather than only in a dedicated role endpoint — role is
   // just another editable attribute of the account (docs/phase-6-plan.md §1 "Role
   // changes ride on PATCH /users/:id, not a separate PATCH /users/:id/role").
-  async update(id: number, dto: UpdateUserDto): Promise<User> {
+  async update(id: number, dto: UpdateUserDto, actorId: number): Promise<User> {
     const user = await this.findOne(id);
+    const changes: string[] = [];
 
     if (dto.email !== undefined) {
       const email = normalizeEmail(dto.email);
       if (email !== user.email) {
         await this.assertEmailAvailable(email);
+        changes.push(`Email changed to ${email}`);
         user.email = email;
       }
     }
-    if (dto.name !== undefined) user.name = dto.name;
+    if (dto.name !== undefined && dto.name !== user.name) {
+      changes.push(`Name changed to ${dto.name}`);
+      user.name = dto.name;
+    }
     if (dto.role !== undefined && dto.role !== user.role) {
       // BR-075: only DEMOTING an Owner away from the role can ever violate the
       // invariant — promoting Staff to Owner only ever adds an active Owner.
       if (user.role === UserRole.Owner && dto.role !== UserRole.Owner) {
         await this.assertOwnerRemains(id);
       }
+      changes.push(`Role changed from ${user.role} to ${dto.role}`);
       user.role = dto.role;
     }
-    return this.usersRepository.save(user);
+    const saved = await this.usersRepository.save(user);
+    // Phase 9 (docs/phase-9-plan.md §1 "summary is a short human sentence, not a
+    // before/after diff"): only record an event when something actually changed — a
+    // no-op PATCH (e.g. a form resubmitting its current state) is not an edit.
+    if (changes.length > 0) {
+      await this.auditService.record({
+        eventType: AuditEventType.USER_UPDATED,
+        actorUserId: actorId,
+        subjectUserId: id,
+        entityType: AuditEntityType.USER,
+        entityId: id,
+        summary: changes.join('; '),
+      });
+    }
+    return saved;
   }
 
-  async setStatus(id: number, status: EntityStatus): Promise<User> {
+  async setStatus(
+    id: number,
+    status: EntityStatus,
+    actorId: number,
+  ): Promise<User> {
     const user = await this.findOne(id);
     // BR-075: only DEACTIVATING a currently-active Owner can violate the invariant —
     // reactivating one, or deactivating a Staff member, never can.
@@ -89,7 +129,16 @@ export class UsersService {
       await this.assertOwnerRemains(id);
     }
     user.status = status;
-    return this.usersRepository.save(user);
+    const saved = await this.usersRepository.save(user);
+    await this.auditService.record({
+      eventType: AuditEventType.USER_STATUS_CHANGED,
+      actorUserId: actorId,
+      subjectUserId: id,
+      entityType: AuditEntityType.USER,
+      entityId: id,
+      summary: status === EntityStatus.ACTIVE ? 'Reactivated' : 'Deactivated',
+    });
+    return saved;
   }
 
   // The Owner's reset (docs/phase-6-plan.md §1 "PATCH /users/:id/password is a
@@ -101,12 +150,29 @@ export class UsersService {
   // rather than adding a separate PATCH /users/:id/unlock route, because that route's
   // only ever user is an Owner who has already been told to just wait fifteen
   // minutes. changeOwnPassword below deliberately does NOT do this — see its comment.
-  async setPassword(id: number, newPassword: string): Promise<void> {
+  async setPassword(
+    id: number,
+    newPassword: string,
+    actorId: number,
+  ): Promise<void> {
     const user = await this.findOne(id);
+    const wasLocked = this.isLocked(user);
     user.passwordHash = await hashPassword(newPassword);
     user.failedLoginAttempts = 0;
     user.lockedUntil = null;
     await this.usersRepository.save(user);
+    await this.auditService.record({
+      eventType: AuditEventType.USER_PASSWORD_RESET,
+      actorUserId: actorId,
+      subjectUserId: id,
+      entityType: AuditEntityType.USER,
+      entityId: id,
+      // §1 "a summary never contains a password, a password hash, or a token" —
+      // records THAT a reset happened, never anything about either password.
+      summary: wasLocked
+        ? 'Password reset by an Owner — lock cleared'
+        : 'Password reset by an Owner',
+    });
   }
 
   // A valid token proves who opened the tab, not who is sitting at it now — so even
@@ -114,6 +180,10 @@ export class UsersService {
   // before it's replaced. 401 (not 403, not 400): the failure is "you have not proven
   // you are this user," which is exactly what 401 means, the same category as a
   // failed login.
+  //
+  // Phase 9 (docs/phase-9-plan.md §1 "one inclusion worth defending: password_changed"):
+  // actor and subject are the SAME id here, deliberately — the one case where they
+  // legitimately coincide, because the fact really is symmetric.
   async changeOwnPassword(
     id: number,
     currentPassword: string,
@@ -126,6 +196,14 @@ export class UsersService {
     }
     user.passwordHash = await hashPassword(newPassword);
     await this.usersRepository.save(user);
+    await this.auditService.record({
+      eventType: AuditEventType.PASSWORD_CHANGED,
+      actorUserId: id,
+      subjectUserId: id,
+      entityType: AuditEntityType.USER,
+      entityId: id,
+      summary: 'Password changed',
+    });
   }
 
   // Phase 8 (docs/phase-8-plan.md §1): true only while an unexpired lock is set. NULL,
@@ -157,7 +235,15 @@ export class UsersService {
   // above, just slower and easier to miss. A lock that has actually expired is a
   // completed lock: the account earns a genuinely fresh count, not a live one
   // sitting one guess away from re-triggering.
-  async registerFailedLogin(user: User): Promise<void> {
+  //
+  // Phase 9 (docs/phase-9-plan.md §2 "UsersService.registerFailedLogin — emits
+  // ACCOUNT_LOCKED once, at the transition"): this falls out of the early-return
+  // above for free — the same guard that stops an attacker extending a lock forever
+  // also gives ACCOUNT_LOCKED its natural once-per-lock semantics, since this branch
+  // can only be reached on the exact call that crosses the threshold. `ip` is scope
+  // fork A, threaded down from AuthService so the lock event carries the same address
+  // evidence as the login_failed rows around it.
+  async registerFailedLogin(user: User, ip: string | null = null): Promise<void> {
     if (this.isLocked(user)) return;
     if (user.lockedUntil) {
       user.failedLoginAttempts = 0;
@@ -170,13 +256,24 @@ export class UsersService {
         infer: true,
       },
     );
+    let justLocked = false;
+    let lockoutMinutes = 0;
     if (user.failedLoginAttempts >= threshold) {
-      const lockoutMinutes = this.configService.get('security.lockoutMinutes', {
+      lockoutMinutes = this.configService.get('security.lockoutMinutes', {
         infer: true,
       });
       user.lockedUntil = new Date(Date.now() + lockoutMinutes * 60_000);
+      justLocked = true;
     }
     await this.persistLoginState(user);
+    if (justLocked) {
+      await this.auditService.record({
+        eventType: AuditEventType.ACCOUNT_LOCKED,
+        subjectUserId: user.id,
+        summary: `Locked for ${lockoutMinutes} minute${lockoutMinutes === 1 ? '' : 's'} after ${threshold} consecutive failures`,
+        actorIp: ip,
+      });
+    }
   }
 
   // Called from AuthService.validateUser on every successful login. A clean slate —

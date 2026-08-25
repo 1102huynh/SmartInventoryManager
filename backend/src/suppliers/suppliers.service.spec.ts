@@ -1,6 +1,8 @@
 import { NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { AuditService } from '../audit/audit.service';
+import { AuditEventType } from '../common/enums/audit-event-type.enum';
 import { EntityStatus } from '../common/enums/entity-status.enum';
 import { Supplier } from './supplier.entity';
 import { SuppliersService } from './suppliers.service';
@@ -19,6 +21,8 @@ describe('SuppliersService', () => {
     create: jest.fn((v) => v),
     save: jest.fn((v) => Promise.resolve({ id: 1, ...v })),
   };
+  const auditService = { record: jest.fn() };
+  const ACTOR_ID = 99;
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -26,6 +30,7 @@ describe('SuppliersService', () => {
       providers: [
         SuppliersService,
         { provide: getRepositoryToken(Supplier), useValue: repo },
+        { provide: AuditService, useValue: auditService },
       ],
     }).compile();
     service = moduleRef.get(SuppliersService);
@@ -39,13 +44,29 @@ describe('SuppliersService', () => {
   });
 
   it('creates a supplier with optional fields defaulted to null', async () => {
-    await service.create({ name: 'Highland Roasters' });
+    await service.create({ name: 'Highland Roasters' }, ACTOR_ID);
     expect(repo.create).toHaveBeenCalledWith({
       name: 'Highland Roasters',
       contactName: null,
       email: null,
       phone: null,
     });
+  });
+
+  // Phase 9 (docs/phase-9-plan.md §2 "each write method records its event with the
+  // actor it was passed").
+  it('records supplier_created with the actor', async () => {
+    const created = await service.create(
+      { name: 'Highland Roasters' },
+      ACTOR_ID,
+    );
+    expect(auditService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: AuditEventType.SUPPLIER_CREATED,
+        actorUserId: ACTOR_ID,
+        entityId: created.id,
+      }),
+    );
   });
 
   it('filters by status and a case-insensitive name search', async () => {

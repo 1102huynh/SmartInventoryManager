@@ -356,6 +356,23 @@ function normalizeTx(t){
   };
 }
 
+// Phase 9 (docs/phase-9-plan.md §3): the wire shape (snake_case-derived eventType,
+// nested actor/subject User objects, ISO createdAt) turned into what Views.auditLog
+// actually renders — the same normalize-at-the-boundary pattern normalizeTx uses.
+function normalizeAuditEvent(e){
+  return {
+    id: e.id,
+    eventType: e.eventType,
+    date: new Date(e.createdAt),
+    actor: e.actor || null,
+    subject: e.subject || null,
+    entityType: e.entityType || null,
+    entityId: e.entityId ?? null,
+    summary: e.summary,
+    actorIp: e.actorIp || null,
+  };
+}
+
 const Store = {
   // Every request goes through here: it attaches the bearer token (see
   // docs/phase-3-plan.md "Token transport" — this replaces Phase 2's client-supplied
@@ -613,6 +630,22 @@ const Store = {
     return rows.slice(0, limit).map(normalizeTx);
   },
 
+  // Phase 9 (docs/phase-9-plan.md §3): built exactly like listAllTransactions — query
+  // string assembly, one GET, one normalize pass. Owner-only server-side
+  // (AuditController's class-level @Roles) — this method has no opinion about that,
+  // the same way Store.getUsers doesn't gate itself either.
+  async listAuditEvents({ eventType, actorUserId, subjectUserId, days, limit } = {}){
+    const q = new URLSearchParams();
+    if (eventType) q.set('eventType', eventType);
+    if (actorUserId) q.set('actorUserId', actorUserId);
+    if (subjectUserId) q.set('subjectUserId', subjectUserId);
+    if (days) q.set('days', days);
+    if (limit) q.set('limit', limit);
+    const qs = q.toString();
+    const rows = await this._request('GET', '/audit-events' + (qs ? '?' + qs : ''));
+    return rows.map(normalizeAuditEvent);
+  },
+
   getDashboardSummary(){ return this._request('GET', '/dashboard/summary'); },
 
   // Three thin methods instead of Phase 1's single createTransaction({ type, ... })
@@ -801,6 +834,31 @@ const UI = {
 // display.
 const ROLE_LABEL = { owner: 'Owner', staff: 'Staff' };
 
+// Phase 9 (docs/phase-9-plan.md §1's closed list, §3): a human label per
+// AuditEventType, for the Event column and the toolbar's type filter. Kept as a flat
+// map rather than derived from the enum string so the wording can read naturally
+// ("Locked out" reads better than "Account locked") without touching the wire value.
+const AUDIT_EVENT_LABEL = {
+  login_succeeded: 'Login succeeded',
+  login_failed: 'Login failed',
+  account_locked: 'Locked out',
+  password_changed: 'Password changed',
+  user_created: 'User created',
+  user_updated: 'User updated',
+  user_status_changed: 'User status changed',
+  user_password_reset: 'Password reset',
+  product_created: 'Product created',
+  product_updated: 'Product updated',
+  product_status_changed: 'Product status changed',
+  product_deleted: 'Product deleted',
+  supplier_created: 'Supplier created',
+  supplier_updated: 'Supplier updated',
+  supplier_status_changed: 'Supplier status changed',
+  category_created: 'Category created',
+  category_updated: 'Category updated',
+  category_deleted: 'Category deleted',
+};
+
 function shellTemplate(section){
   const navItem = (key, hash, label, icon) => `
     <a class="nav-item${section===key?' active':''}" href="${hash}">
@@ -823,6 +881,7 @@ function shellTemplate(section){
         ${navItem('suppliers', '#/suppliers', 'Suppliers', 'suppliers')}
         ${navItem('history', '#/history', 'Inventory History', 'history')}
         ${Auth.isOwner() ? navItem('users', '#/users', 'Users', 'users') : ''}
+        ${Auth.isOwner() ? navItem('audit', '#/audit', 'Audit Log', 'history') : ''}
       </nav>
     </aside>
     <div class="main">
@@ -879,7 +938,8 @@ function renderApp(){
     (parts[0] === 'products' && (parts[1] === 'new' || parts[2] === 'edit')) ||
     (parts[0] === 'suppliers' && (parts[1] === 'new' || parts[2] === 'edit')) ||
     parts[0] === 'categories' ||
-    parts[0] === 'users';
+    parts[0] === 'users' ||
+    parts[0] === 'audit';
   if (isOwnerOnlyRoute && !Auth.isOwner()){
     UI.toast("You don't have permission to view that page.", 'error');
     location.hash = '#/dashboard';
@@ -944,6 +1004,9 @@ function renderApp(){
     } else if (parts[0] === 'users' && parts[2] === 'edit'){
       crumb.textContent = 'Edit User';
       Views.userForm(view, parts[1]);
+    } else if (parts[0] === 'audit'){
+      crumb.textContent = 'Audit Log';
+      Views.auditLog(view, query);
     } else if (parts[0] === 'account'){
       crumb.textContent = 'My Account';
       Views.account(view);
@@ -2225,15 +2288,21 @@ Views.userList = function(container, query){
           <button class="btn btn-ghost btn-sm" data-cancel-toggle="${u.id}">Cancel</button>
           <button class="btn btn-danger btn-sm" data-do-toggle="${u.id}">Confirm</button>
         </div>`
+      // History: the cross-link the whole phase is built around (docs/phase-9-plan.md
+      // §3) — every row gets one, not just locked ones; the locked badge above is
+      // just the most visible entry point into the same screen. No Auth.isOwner()
+      // check needed here — this whole view is already Owner-gated (see the class
+      // comment above).
       : `<div class="action-row">
           <a class="btn btn-ghost btn-sm" href="#/users/${u.id}/edit">Edit</a>
           <button class="btn btn-ghost btn-sm" data-start-toggle="${u.id}">${toggleLabel}</button>
+          <a class="btn btn-ghost btn-sm" href="#/audit?subjectUserId=${u.id}">History</a>
         </div>`;
     return `<tr>
       <td class="cell-name">${UI.esc(u.name)} ${isSelf ? '<span class="badge badge-inactive">You</span>' : ''}</td>
       <td class="cell-sub">${UI.esc(u.email)}</td>
       <td>${UI.esc(ROLE_LABEL[u.role] || u.role)}</td>
-      <td>${UI.badgeStatus(u.status)} ${UI.badgeLocked(u.locked)}</td>
+      <td>${UI.badgeStatus(u.status)} ${u.locked ? `<a href="#/audit?subjectUserId=${u.id}">${UI.badgeLocked(u.locked)}</a>` : ''}</td>
       <td>${actions}</td>
     </tr>`;
   }
@@ -2268,6 +2337,108 @@ Views.userList = function(container, query){
         .catch(err => { UI.toast(err.message, 'error'); confirmToggleId = null; render(); });
     }));
     attachHeaderOnly();
+  }
+
+  load();
+};
+
+// -------------------------------------------------------------- Audit Log --
+// FR-065 (docs/phase-9-plan.md §3). Same structure as Views.historyView — a
+// filtered, read-only, newest-first table with a toolbar of <select>s — since that's
+// the closest existing analogue: a log, not a managed resource. Owner-only,
+// server-enforced (AuditController's class-level @Roles) and client-gated the same
+// way as #/users (isOwnerOnlyRoute in renderApp()).
+//
+// No per-event detail drawer, no drilldown into subject/target: the `summary` IS the
+// detail (§1 — a human sentence was chosen over a diff precisely so there's nothing
+// further to open), so every column here renders plain text.
+Views.auditLog = function(container, query){
+  let eventType = (query && query.get('eventType')) || '';
+  // Reads the incoming ?subjectUserId= straight off the URL — this is the landing
+  // state for the one cross-link the whole phase is built around: each row of
+  // Views.userList (most visibly the `locked` badge) links to #/audit?subjectUserId=.
+  let subjectUserId = (query && query.get('subjectUserId')) || '';
+  let days = '';
+  let override = 'normal';
+
+  function load(){
+    container.innerHTML = header() + toolbar() + `<div class="table-wrap"><table class="data-table"><tbody>${UI.skeletonRows(6,6)}</tbody></table></div>`;
+    attachHeaderHandlers();
+    UI.mockFetch(async () => {
+      if (override === 'empty') return [];
+      return Store.listAuditEvents({
+        eventType: eventType || undefined,
+        subjectUserId: subjectUserId || undefined,
+        days: days ? Number(days) : undefined,
+      });
+    }, { forceState: override === 'error' ? 'error' : null })
+      .then(list => { container.innerHTML = header() + toolbar() + body(list); attachAll(); })
+      .catch(err => { container.innerHTML = header() + toolbar() + UI.errorState(err.message, 'retry'); attachAll(); });
+  }
+
+  function header(){
+    return `<div class="content-header"><div><h1>Audit Log</h1><div class="sub">Who did what, and when — account changes, catalog edits, and every login attempt.</div></div></div>`;
+  }
+
+  function toolbar(){
+    return `<div class="toolbar">
+      <select class="select-filter" id="a-type">
+        <option value="">All events</option>
+        ${Object.entries(AUDIT_EVENT_LABEL).map(([value, label]) => `<option value="${value}" ${eventType===value?'selected':''}>${UI.esc(label)}</option>`).join('')}
+      </select>
+      <select class="select-filter" id="a-days">
+        <option value="">All time</option>
+        <option value="7" ${days==='7'?'selected':''}>Last 7 days</option>
+        <option value="30" ${days==='30'?'selected':''}>Last 30 days</option>
+        <option value="90" ${days==='90'?'selected':''}>Last 90 days</option>
+      </select>
+      ${subjectUserId ? `<button type="button" class="btn btn-ghost btn-sm" id="a-clear-subject">Filtered to one account &times;</button>` : ''}
+      ${UI.previewControl(override)}
+    </div>`;
+  }
+
+  function body(list){
+    if (list.length === 0){
+      return UI.emptyState(
+        override === 'empty' ? 'No audit events recorded' : 'No matching events',
+        override === 'empty' ? 'Events will appear here once someone logs in or an Owner makes a change.' : 'Try a different filter combination.',
+      );
+    }
+    return `<div class="table-wrap"><table class="data-table">
+      <thead><tr><th>When</th><th>Event</th><th>Actor</th><th>Subject / Target</th><th>Details</th><th>Address</th></tr></thead>
+      <tbody>${list.map(rowHtml).join('')}</tbody>
+    </table></div>`;
+  }
+
+  // Address (docs/phase-9-plan.md §1 fork A) is evidence to read, not an index to
+  // pivot on — §3 explicitly rules out a filter for it, but the whole argument for
+  // capturing it was that an Owner needs to SEE it to tell "Riley fumbling at the
+  // counter" from "a script working through an email list." Blank on every
+  // administrative row (actorIp is only ever set on authentication events) — that
+  // blankness is itself truthful, not a missing column.
+  function rowHtml(e){
+    const target = e.subject
+      ? UI.esc(e.subject.name)
+      : (e.entityType ? `<span class="cell-sub">${UI.esc(e.entityType)} #${e.entityId}</span>` : '<span class="cell-sub">—</span>');
+    return `<tr>
+      <td class="cell-sub">${UI.fmtDateTime(e.date)}</td>
+      <td>${UI.esc(AUDIT_EVENT_LABEL[e.eventType] || e.eventType)}</td>
+      <td class="cell-sub">${e.actor ? UI.esc(e.actor.name) : '—'}</td>
+      <td>${target}</td>
+      <td>${UI.esc(e.summary)}</td>
+      <td class="cell-sub">${e.actorIp ? UI.esc(e.actorIp) : '—'}</td>
+    </tr>`;
+  }
+
+  function attachHeaderHandlers(){
+    const t = container.querySelector('#a-type'); if (t) t.addEventListener('change', e => { eventType = e.target.value; load(); });
+    const d = container.querySelector('#a-days'); if (d) d.addEventListener('change', e => { days = e.target.value; load(); });
+    const clear = container.querySelector('#a-clear-subject'); if (clear) clear.addEventListener('click', () => { subjectUserId = ''; load(); });
+    const pr = container.querySelector('#preview-select'); if (pr) pr.addEventListener('change', e => { override = e.target.value; load(); });
+  }
+  function attachAll(){
+    attachHeaderHandlers();
+    const retry = container.querySelector('#retry'); if (retry) retry.addEventListener('click', () => { override = 'normal'; load(); });
   }
 
   load();

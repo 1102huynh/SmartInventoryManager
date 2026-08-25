@@ -11,6 +11,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { CurrentUserId } from '../common/decorators/current-user-id.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../common/enums/user-role.enum';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -39,14 +40,18 @@ export class ProductsController {
 
   @Roles(UserRole.Owner)
   @Post()
-  create(@Body() dto: CreateProductDto) {
-    return this.productsService.create(dto);
+  create(@Body() dto: CreateProductDto, @CurrentUserId() actorId: number) {
+    return this.productsService.create(dto, actorId);
   }
 
   @Roles(UserRole.Owner)
   @Patch(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateProductDto) {
-    return this.productsService.update(id, dto);
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateProductDto,
+    @CurrentUserId() actorId: number,
+  ) {
+    return this.productsService.update(id, dto, actorId);
   }
 
   @Roles(UserRole.Owner)
@@ -54,14 +59,15 @@ export class ProductsController {
   setStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: SetProductStatusDto,
+    @CurrentUserId() actorId: number,
   ) {
-    return this.productsService.setStatus(id, dto.status);
+    return this.productsService.setStatus(id, dto.status, actorId);
   }
 
   @Roles(UserRole.Owner)
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT) // a successful DELETE returns no body — 204, not 200
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.productsService.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUserId() actorId: number) {
+    return this.productsService.remove(id, actorId);
   }
 }

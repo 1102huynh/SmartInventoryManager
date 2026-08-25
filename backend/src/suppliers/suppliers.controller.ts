@@ -8,6 +8,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { CurrentUserId } from '../common/decorators/current-user-id.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../common/enums/user-role.enum';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
@@ -39,8 +40,8 @@ export class SuppliersController {
 
   @Roles(UserRole.Owner)
   @Post()
-  create(@Body() dto: CreateSupplierDto) {
-    return this.suppliersService.create(dto);
+  create(@Body() dto: CreateSupplierDto, @CurrentUserId() actorId: number) {
+    return this.suppliersService.create(dto, actorId);
   }
 
   @Roles(UserRole.Owner)
@@ -48,8 +49,9 @@ export class SuppliersController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateSupplierDto,
+    @CurrentUserId() actorId: number,
   ) {
-    return this.suppliersService.update(id, dto);
+    return this.suppliersService.update(id, dto, actorId);
   }
 
   @Roles(UserRole.Owner)
@@ -57,7 +59,8 @@ export class SuppliersController {
   setStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: SetSupplierStatusDto,
+    @CurrentUserId() actorId: number,
   ) {
-    return this.suppliersService.setStatus(id, dto.status);
+    return this.suppliersService.setStatus(id, dto.status, actorId);
   }
 }

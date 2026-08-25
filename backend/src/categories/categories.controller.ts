@@ -10,6 +10,7 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
+import { CurrentUserId } from '../common/decorators/current-user-id.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../common/enums/user-role.enum';
 import { CategoriesService } from './categories.service';
@@ -35,8 +36,8 @@ export class CategoriesController {
 
   @Roles(UserRole.Owner)
   @Post()
-  create(@Body() dto: CreateCategoryDto) {
-    return this.categoriesService.create(dto);
+  create(@Body() dto: CreateCategoryDto, @CurrentUserId() actorId: number) {
+    return this.categoriesService.create(dto, actorId);
   }
 
   @Roles(UserRole.Owner)
@@ -44,14 +45,15 @@ export class CategoriesController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateCategoryDto,
+    @CurrentUserId() actorId: number,
   ) {
-    return this.categoriesService.update(id, dto);
+    return this.categoriesService.update(id, dto, actorId);
   }
 
   @Roles(UserRole.Owner)
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT) // a successful DELETE returns no body — 204, not 200
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.categoriesService.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUserId() actorId: number) {
+    return this.categoriesService.remove(id, actorId);
   }
 }

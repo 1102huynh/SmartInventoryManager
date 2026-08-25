@@ -5,6 +5,9 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { AuditService } from '../audit/audit.service';
+import { AuditEntityType } from '../common/enums/audit-entity-type.enum';
+import { AuditEventType } from '../common/enums/audit-event-type.enum';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { Category } from './category.entity';
@@ -18,23 +21,46 @@ export class CategoriesService {
   constructor(
     @InjectRepository(Category)
     private readonly categoriesRepository: Repository<Category>,
+    private readonly auditService: AuditService,
   ) {}
 
   findAll(): Promise<Category[]> {
     return this.categoriesRepository.find({ order: { name: 'ASC' } });
   }
 
-  async create(dto: CreateCategoryDto): Promise<Category> {
+  async create(dto: CreateCategoryDto, actorId: number): Promise<Category> {
     await this.assertNameAvailable(dto.name);
     const category = this.categoriesRepository.create({ name: dto.name });
-    return this.categoriesRepository.save(category);
+    const saved = await this.categoriesRepository.save(category);
+    await this.auditService.record({
+      eventType: AuditEventType.CATEGORY_CREATED,
+      actorUserId: actorId,
+      entityType: AuditEntityType.CATEGORY,
+      entityId: saved.id,
+      summary: `Created "${saved.name}"`,
+    });
+    return saved;
   }
 
-  async update(id: number, dto: UpdateCategoryDto): Promise<Category> {
+  async update(
+    id: number,
+    dto: UpdateCategoryDto,
+    actorId: number,
+  ): Promise<Category> {
     const category = await this.findOneOrThrow(id);
     if (dto.name !== undefined && dto.name !== category.name) {
       await this.assertNameAvailable(dto.name);
+      const oldName = category.name;
       category.name = dto.name;
+      const saved = await this.categoriesRepository.save(category);
+      await this.auditService.record({
+        eventType: AuditEventType.CATEGORY_UPDATED,
+        actorUserId: actorId,
+        entityType: AuditEntityType.CATEGORY,
+        entityId: id,
+        summary: `Renamed from "${oldName}" to "${dto.name}"`,
+      });
+      return saved;
     }
     return this.categoriesRepository.save(category);
   }
@@ -45,9 +71,18 @@ export class CategoriesService {
   // ON DELETE SET NULL (see the InitSchema migration), so any product currently
   // pointing at this category is orphaned back to "Uncategorized" by the database
   // itself. Building a guard here would silently contradict that schema decision.
-  async remove(id: number): Promise<void> {
+  async remove(id: number, actorId: number): Promise<void> {
     const category = await this.findOneOrThrow(id);
     await this.categoriesRepository.remove(category);
+    // §1 "entity_id is deliberately NOT a foreign key": this row points at an id
+    // that no longer exists in categories the moment this write completes.
+    await this.auditService.record({
+      eventType: AuditEventType.CATEGORY_DELETED,
+      actorUserId: actorId,
+      entityType: AuditEntityType.CATEGORY,
+      entityId: id,
+      summary: `Deleted "${category.name}"`,
+    });
   }
 
   private async findOneOrThrow(id: number): Promise<Category> {

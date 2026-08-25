@@ -39,7 +39,12 @@ The API listens on `http://localhost:3000`. It runs directly (no reverse proxy) 
 this setup, so `req.ip` is honest — if this is ever deployed behind a load balancer
 or reverse proxy, Express needs `app.set('trust proxy', ...)` first, or every request
 will appear to come from the proxy's one address and Phase 8's rate limiting will
-lock out the world.
+lock out the world. As of Phase 9, this is no longer only a throttling caveat: every
+`login_failed`/`login_succeeded`/`account_locked` row in the audit log
+(`docs/phase-9-plan.md`) also records this same address, so behind an unconfigured
+proxy every one of those rows would silently record the proxy's own IP instead of
+the real caller's — wrong data that *looks* like a real signal, not merely a weaker
+rate limit.
 
 **Signing in:** every route except `POST /auth/login` now requires a token (see
 `docs/phase-3-plan.md`). Every seeded demo user (`npm run seed`) shares one dev-only
@@ -74,6 +79,14 @@ expected, not a bug. Both roles can record stock-in, stock-out, and adjustments.
 create, edit, deactivate/reactivate, reset password — at `#/users`. Any signed-in
 user can change their own password at `#/account`, reachable from the user chip.
 
+**Audit log** (`docs/phase-9-plan.md`): an Owner can review who did what, and when —
+every login attempt and every account/catalog change — at `#/audit`. It's **empty
+right after `npm run seed`, and that's correct, not broken**: `npm run seed` writes
+users, products, suppliers, categories, and transactions directly through
+repositories, so it emits no audit events; the log is only ever as true as the
+actions that produced it, and a seeded row would attribute an action to a person who
+never performed it. Sign in, make a change, and the log will have something to show.
+
 **3. Start the frontend:**
 
 ```
@@ -95,19 +108,34 @@ See `docs/learning-notes/testing-strategy.md` for what each of these actually pr
 
 ## Current phase
 
-Phase 8 — Login rate limiting & account lockout (`docs/phase-8-plan.md`): repeated
-failed logins are now expensive. A global request throttle sits in front of every
-route (generous defaults), with a much tighter limit on `POST /auth/login` and
-`PATCH /auth/password`; five consecutive failed logins temporarily lock that account
-for fifteen minutes, self-clearing, no Owner action required (though an Owner's
-password reset also clears it immediately). Neither mechanism reveals whether an
-account exists to an unauthenticated caller — a locked or deactivated account's
-specific message is only reachable with the *correct* password. No new FR; this
-hardens FR-060, it doesn't extend it. See `business-rules.md` BR-079–081 and
-`docs/learning-notes/authentication-and-guards.md` for the "rate limiting vs.
-lockout" distinction.
+Phase 9 — Audit log (`docs/phase-9-plan.md`): a single append-only `audit_events`
+table now records who did what, and when — both halves the project had deferred by
+name across four consecutive phases: every authentication attempt (login success,
+login failure, account lockout) and every administrative write (account
+create/edit/status/password-reset, product/supplier/category create/edit/status/
+delete). The **actor** (who performed it) and **subject** (the account it's about)
+are recorded as two distinct, often-different facts — a failed login has a subject
+and no actor, because the person who typed the wrong password is precisely not the
+account holder. Recording is best-effort (a failed audit write never fails the
+operation it describes — this is a *record*, not a *proof*) and deliberately excludes
+stock movements (`inventory_transactions` already owns those, BR-083) and reads. An
+Owner reviews it at `#/audit`, Owner-only, with a cross-link from every account on
+the Users screen — most usefully the `locked` badge Phase 8 shipped, which now leads
+somewhere. FR-065 (Should) added. See `business-rules.md` BR-082–084 and
+`docs/learning-notes/cross-cutting-concerns.md` for why this is an explicit service
+call rather than a global interceptor or an ORM entity subscriber.
 
-Earlier phases: Phase 7 (`docs/phase-7-plan.md`) gave `users` and `categories`
+Earlier phases: Phase 8 (`docs/phase-8-plan.md`) made repeated failed logins
+expensive — a global request throttle sits in front of every route (generous
+defaults), with a much tighter limit on `POST /auth/login` and `PATCH
+/auth/password`; five consecutive failed logins temporarily lock that account for
+fifteen minutes, self-clearing, no Owner action required (though an Owner's password
+reset also clears it immediately). Neither mechanism reveals whether an account
+exists to an unauthenticated caller — a locked or deactivated account's specific
+message is only reachable with the *correct* password. No new FR; this hardened
+FR-060, it didn't extend it. See `business-rules.md` BR-079–081 and
+`docs/learning-notes/authentication-and-guards.md` for the "rate limiting vs.
+lockout" distinction. Phase 7 (`docs/phase-7-plan.md`) gave `users` and `categories`
 `created_at`/`updated_at`, closing the last gap in a convention `products` and
 `suppliers` have had since day one — `inventory_transactions` deliberately keeps
 `created_at` only (BR-051's immutability). Phase 6 (`docs/phase-6-plan.md`) made

@@ -4,6 +4,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AuditModule } from '../audit/audit.module';
 import { AppConfig } from '../config/configuration';
 import { UsersModule } from '../users/users.module';
 import { User } from '../users/user.entity';
@@ -18,6 +19,7 @@ import { RolesGuard } from './roles.guard';
   imports: [
     TypeOrmModule.forFeature([User]),
     UsersModule,
+    AuditModule,
     PassportModule,
     // forRootAsync (rather than forRoot with a literal string) because the secret has
     // to come from ConfigService, not a value hardcoded at module-load time — the same

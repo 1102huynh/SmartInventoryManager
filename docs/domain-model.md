@@ -38,6 +38,7 @@ the system exists to support this core.
 | Sale / Order | Not included (Future) | Only relevant if Q-4 (product.md) resolves toward stock-out modeling a sale with price/customer. Not part of the current concept. |
 | Purchase Order | Not included (Future) | Procurement workflow is explicitly postponed. |
 | Warehouse / Location | Not included (Future) | Single-location assumption (A-1). |
+| Audit Event | Yes, as supporting [Added 2026-08-25, Phase 9] | Records who did what, to what, and when — for authentication and administrative writes. Owns no invariants of the core domain; the core domain (stock movement) functions identically whether or not this entity exists. See `docs/phase-9-plan.md`. |
 
 ## 4. Main Entities & Responsibilities
 
@@ -70,6 +71,17 @@ Represents a person operating the system. Holds real login credentials (a unique
 a hashed password, as of Phase 3) and is responsible for authentication and for being the
 attributable actor on every Inventory Transaction. Role/permission distinctions are not
 modeled yet — `role` is descriptive metadata only, not enforced (A-5).
+
+### Audit Event (supporting, Should Have) [Added 2026-08-25, Phase 9]
+Represents a single authentication or administrative event — a login attempt, an
+account lockout, a password change, or a create/edit/status-change/delete on a User,
+Product, Supplier, or Category. Responsible for naming the **actor** (who performed
+it, if anyone authenticated did) and the **subject** (the account it's about) as two
+distinct facts, a short human-readable summary, and when it happened. Has no
+behavior of its own beyond being written once and read — no code path updates or
+deletes a row here. Deliberately does not record inventory movement
+(`inventory_transactions` already owns that, BR-083) or reads. See
+`docs/phase-9-plan.md`.
 
 ## 5. Relationships
 
@@ -125,6 +137,11 @@ does not, because there is nothing for it to ever record.
   this table would be a column whose value could only ever equal `created_at`. Its
   absence is a direct consequence of that rule, not an oversight (see the entity
   comment on `InventoryTransaction`).
+- **`audit_events`** [Added 2026-08-25, Phase 9] — the **second** instance of the
+  immutable case, for the same reason: BR-082 makes a recorded event append-only, so
+  `created_at` only, no `updated_at`. Having a second instance is itself a small
+  piece of evidence that the immutable-table rule above was worth writing as a rule
+  rather than a one-off observation about `inventory_transactions`.
 
 **`occurred_at` vs. `created_at`** — easy to conflate on `inventory_transactions`,
 the one entity that has both:

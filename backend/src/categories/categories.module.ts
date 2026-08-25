@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AuditModule } from '../audit/audit.module';
 import { CategoriesController } from './categories.controller';
 import { CategoriesService } from './categories.service';
 import { Category } from './category.entity';
@@ -14,7 +15,7 @@ import { Category } from './category.entity';
 // validate a categoryId) inject CategoriesService by importing CategoriesModule —
 // without an export, a provider is private to the module that declares it.
 @Module({
-  imports: [TypeOrmModule.forFeature([Category])],
+  imports: [TypeOrmModule.forFeature([Category]), AuditModule],
   controllers: [CategoriesController],
   providers: [CategoriesService],
   exports: [CategoriesService],

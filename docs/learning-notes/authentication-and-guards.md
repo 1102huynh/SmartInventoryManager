@@ -265,6 +265,45 @@ attacker who already knows the correct password, and is only being blocked by
 `status`/lock, never adds to that counter, because they didn't fail. Only an actual
 wrong guess counts as a failure.
 
+## The actor/subject distinction (Phase 9)
+
+Phase 9 (`docs/phase-9-plan.md`, an audit log) needed to record *who did this* on
+every write, and the naive first draft is one column: `userId`. `validateUser`'s own
+failure path is the case that breaks it, and it's worth walking through because the
+bug it avoids is a **modeling** mistake, not a coding one — it would compile, pass a
+type checker, and still be wrong.
+
+A failed login for a known email finds a real row in `users`. The intuitive move is
+to write that row's id into the new column: *someone* failed to log in as Jordan, so
+`userId: jordan.id`. That's a lie. The person who typed the wrong password is, in the
+one case an audit log of failed logins exists for, precisely **not** Jordan — Jordan
+already knows their own password. One column that means "the account this event
+matched" in a failed-login row and "the person who did this" in every other row is
+worse than no audit log at all, because a reader has no way to tell which meaning a
+given row is using; they'd read every row as the second, since that's what "who did
+this" usually means.
+
+The fix is naming the two facts separately instead of merging them: **`actor`** (the
+authenticated principal who performed the action — `null` when nobody authenticated,
+which is exactly the failed-login case) and **`subject`** (the account this event is
+*about* — set whenever an email matched, even on failure). A failed login for a known
+email is `actor: null, subject: <the user>`. An Owner deactivating Riley is `actor:
+Alex, subject: Riley`. A self-service password change is the one case where they
+legitimately coincide (`actor: subject: <the same user>`), and it coincides because
+the fact really is symmetric, not because the columns were secretly one column all
+along.
+
+This generalizes past this one table: **when a column's meaning would depend on
+which branch of the code wrote it, that's a sign it's actually two facts wearing one
+name, and the fix is to name them separately, not to document the ambiguity better.**
+It sits beside the enumeration-ordering rule above as a second instance of the same
+underlying discipline — *being precise about what a piece of data actually proves* —
+applied to a schema decision instead of a response-timing one. A `login_failed` row's
+`actor` proves nothing (nobody authenticated); its `subject`, when set, proves only
+"this email matched an account," never "this person did anything." Reading either
+column as claiming more than that is the exact mistake a merged `userId` column would
+have made structurally impossible to avoid.
+
 **`@Roles()` is default-open; the absence of `@Public()` is default-closed — and
 that's intentional, not inconsistent.** `@Public()` marks the *rare* exception (one
 route, `POST /auth/login`) against a *strict* default (every route needs a token) — so
@@ -507,3 +546,7 @@ succeeds.
 - A specific, informative error message is safe to show exactly when reaching it
   requires knowledge an attacker doesn't have (the password) — generalize this rule
   to every account-state check a login function grows, not just the first one.
+- When a column's meaning would depend on which code path wrote it (Phase 9's
+  `actor`/`subject` split), that's two facts wearing one name — name them
+  separately rather than documenting the ambiguity, or a reader has no way to tell
+  which meaning a given row is using.

@@ -9,6 +9,7 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
+import { CurrentUserId } from '../common/decorators/current-user-id.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../common/enums/user-role.enum';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -76,21 +77,26 @@ export class UsersController {
   }
 
   @Post()
-  create(@Body() dto: CreateUserDto) {
-    return this.usersService.create(dto);
+  create(@Body() dto: CreateUserDto, @CurrentUserId() actorId: number) {
+    return this.usersService.create(dto, actorId);
   }
 
   @Patch(':id')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
-    return this.usersService.update(id, dto);
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateUserDto,
+    @CurrentUserId() actorId: number,
+  ) {
+    return this.usersService.update(id, dto, actorId);
   }
 
   @Patch(':id/status')
   setStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: SetUserStatusDto,
+    @CurrentUserId() actorId: number,
   ) {
-    return this.usersService.setStatus(id, dto.status);
+    return this.usersService.setStatus(id, dto.status, actorId);
   }
 
   @Patch(':id/password')
@@ -98,7 +104,8 @@ export class UsersController {
   async setPassword(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: SetUserPasswordDto,
+    @CurrentUserId() actorId: number,
   ) {
-    await this.usersService.setPassword(id, dto.newPassword);
+    await this.usersService.setPassword(id, dto.newPassword, actorId);
   }
 }

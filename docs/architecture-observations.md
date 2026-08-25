@@ -66,6 +66,19 @@ consumer, would add real operational cost (a broker to run, a schema to maintain
 new failure mode) for zero present benefit — exactly the premature complexity this
 phase's brief said to avoid.
 
+**[Added 2026-08-25, Phase 9]** The audit log is the closest this system has come to
+the criterion above — and it still does not meet it. Phase 9 (`docs/phase-9-plan.md`)
+built a second consumer of *events* (`AuditService.record`, called from `AuthService`,
+`UsersService`, `ProductsService`, `SuppliersService`, `CategoriesService`), but §1 of
+that plan deliberately excludes inventory events from it (BR-083): the audit log
+consumes authentication and administrative events, for which there was previously no
+producer or consumer at all — not a second consumer of the *inventory* events this
+section is actually about. So the bar named above remains unmet, and this phase is
+**evidence for** that conclusion rather than against it: a genuine new event-consuming
+concern arrived, and the right answer was still an in-process service call, not a
+broker. Exactly the kind of concrete data point this file exists to accumulate
+instead of speculation.
+
 ## What evidence to look for before extracting anything
 
 - **For Go**: a measured throughput or latency problem in `InventoryService`
@@ -101,6 +114,22 @@ schema-wide migration touching every existing audit column at once, not somethin
 decide as a side effect of adding two tables' worth of columns. Parked here as a
 known latent question, not resolved.
 
+**[Updated 2026-08-25, Phase 9]** Deferred a third time (Phase 8 §1 declined to
+reopen it; `docs/phase-9-plan.md` §1 defers it again), and each new table makes the
+eventual migration one table wider. The exact list, so the next person deciding has
+one instead of an impression — every plain `TIMESTAMP` column in the schema as of
+Phase 9, ten pre-existing plus one new:
+
+- `products.created_at`/`updated_at`, `suppliers.created_at`/`updated_at` (`InitSchema`)
+- `inventory_transactions.created_at` (`InitSchema`; contrast `occurred_at`, `timestamptz`, above)
+- `users.created_at`/`updated_at`, `categories.created_at`/`updated_at` (Phase 7)
+- `users.locked_until` (Phase 8 — operational state, not an audit column, but the
+  same plain-`TIMESTAMP` convention; see that migration's own comment)
+- `audit_events.created_at` **[new, Phase 9]**
+
+Eleven columns across six tables, up from ten across five before this phase. It has
+only grown, never shrunk, every phase since Phase 7 first parked the question.
+
 ## Cross-cutting: two rate-limiting mechanisms, two storage models (Phase 8)
 
 Phase 8 (`docs/phase-8-plan.md`) adds two related but distinct controls, and they
@@ -129,3 +158,18 @@ deployed with more than one running instance in front of the same clients, the
 throttle needs a shared store (`@nestjs/throttler` supports pluggable storage, e.g.
 Redis-backed) before the configured limits mean what they say. Not solved here,
 deliberately — see `docs/phase-8-plan.md` §7 "A shared throttle store."
+
+**[Added 2026-08-25, Phase 9]** `AuditService.record`'s best-effort write (BR-082 —
+a repository failure is caught, logged, and swallowed, never rethrown) is a second
+instance of the same shape as the throttle's in-memory store above: **correct at
+this project's current scale, on a named precondition that a future deployment could
+silently invalidate.** The throttle's precondition is single-process; the audit
+log's is "a write failure here is rare and tolerable, because the log is a record,
+not a proof" (`docs/phase-9-plan.md` §1). Neither precondition is checked at
+runtime, and neither fails loudly if it stops holding — the throttle quietly permits
+more than configured, and a run of `record()` failures quietly thins the log,
+with no error surfaced anywhere a person would see it. Watch for the same kind of
+evidence in both cases: a real, not hypothetical, sign the precondition has moved
+(e.g. audit writes actually failing in production) before treating either as
+something needing an alarm, a retry queue, or a durability guarantee it does not
+today have.

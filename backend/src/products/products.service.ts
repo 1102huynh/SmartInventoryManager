@@ -5,6 +5,9 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { AuditService } from '../audit/audit.service';
+import { AuditEntityType } from '../common/enums/audit-entity-type.enum';
+import { AuditEventType } from '../common/enums/audit-event-type.enum';
 import { EntityStatus } from '../common/enums/entity-status.enum';
 import { InventoryService } from '../inventory/inventory.service';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -29,6 +32,7 @@ export class ProductsService {
     @InjectRepository(Product)
     private readonly productsRepository: Repository<Product>,
     private readonly inventoryService: InventoryService,
+    private readonly auditService: AuditService,
   ) {}
 
   async findAll(query: QueryProductsDto): Promise<ProductWithStock[]> {
@@ -85,7 +89,7 @@ export class ProductsService {
     return this.attachStock(product, currentStock, hasHistory);
   }
 
-  async create(dto: CreateProductDto): Promise<Product> {
+  async create(dto: CreateProductDto, actorId: number): Promise<Product> {
     await this.assertSkuAvailable(dto.sku);
     const product = this.productsRepository.create({
       sku: dto.sku,
@@ -94,12 +98,25 @@ export class ProductsService {
       categoryId: dto.categoryId ?? null,
       lowStockThreshold: dto.lowStockThreshold ?? null,
     });
-    return this.productsRepository.save(product);
+    const saved = await this.productsRepository.save(product);
+    await this.auditService.record({
+      eventType: AuditEventType.PRODUCT_CREATED,
+      actorUserId: actorId,
+      entityType: AuditEntityType.PRODUCT,
+      entityId: saved.id,
+      summary: `Created "${saved.name}" (SKU ${saved.sku})`,
+    });
+    return saved;
   }
 
-  async update(id: number, dto: UpdateProductDto): Promise<Product> {
+  async update(
+    id: number,
+    dto: UpdateProductDto,
+    actorId: number,
+  ): Promise<Product> {
     const product = await this.productsRepository.findOne({ where: { id } });
     if (!product) throw new NotFoundException(`Product ${id} not found.`);
+    const changes: string[] = [];
 
     if (dto.sku !== undefined && dto.sku !== product.sku) {
       // BR-001/FR-002: SKU identity is fixed once the product has any history.
@@ -109,25 +126,60 @@ export class ProductsService {
         );
       }
       await this.assertSkuAvailable(dto.sku);
+      changes.push(`SKU changed to ${dto.sku}`);
       product.sku = dto.sku;
     }
 
+    if (dto.name !== product.name) changes.push(`Name changed to ${dto.name}`);
     product.name = dto.name;
+    if (dto.unit !== product.unit) changes.push(`Unit changed to ${dto.unit}`);
     product.unit = dto.unit;
-    if (dto.categoryId !== undefined) product.categoryId = dto.categoryId;
-    if (dto.lowStockThreshold !== undefined)
+    if (dto.categoryId !== undefined && dto.categoryId !== product.categoryId) {
+      changes.push('Category changed');
+      product.categoryId = dto.categoryId;
+    }
+    if (
+      dto.lowStockThreshold !== undefined &&
+      dto.lowStockThreshold !== product.lowStockThreshold
+    ) {
+      changes.push(`Low-stock threshold changed to ${dto.lowStockThreshold}`);
       product.lowStockThreshold = dto.lowStockThreshold;
-    return this.productsRepository.save(product);
+    }
+
+    const saved = await this.productsRepository.save(product);
+    if (changes.length > 0) {
+      await this.auditService.record({
+        eventType: AuditEventType.PRODUCT_UPDATED,
+        actorUserId: actorId,
+        entityType: AuditEntityType.PRODUCT,
+        entityId: id,
+        summary: changes.join('; '),
+      });
+    }
+    return saved;
   }
 
-  async setStatus(id: number, status: EntityStatus): Promise<Product> {
+  async setStatus(
+    id: number,
+    status: EntityStatus,
+    actorId: number,
+  ): Promise<Product> {
     const product = await this.productsRepository.findOne({ where: { id } });
     if (!product) throw new NotFoundException(`Product ${id} not found.`);
     product.status = status;
-    return this.productsRepository.save(product);
+    const saved = await this.productsRepository.save(product);
+    await this.auditService.record({
+      eventType: AuditEventType.PRODUCT_STATUS_CHANGED,
+      actorUserId: actorId,
+      entityType: AuditEntityType.PRODUCT,
+      entityId: id,
+      summary:
+        status === EntityStatus.ACTIVE ? 'Reactivated' : 'Deactivated',
+    });
+    return saved;
   }
 
-  async remove(id: number): Promise<void> {
+  async remove(id: number, actorId: number): Promise<void> {
     const product = await this.productsRepository.findOne({ where: { id } });
     if (!product) throw new NotFoundException(`Product ${id} not found.`);
     // BR-004/FR-006: no hard delete once any transaction exists — the RESTRICT
@@ -139,6 +191,17 @@ export class ProductsService {
       );
     }
     await this.productsRepository.remove(product);
+    // §1 "entity_id is deliberately NOT a foreign key": this row points at an id
+    // that no longer exists in products the moment this write completes — that's the
+    // entire point of recording it. Captured before remove() so the name is still in
+    // hand for the summary.
+    await this.auditService.record({
+      eventType: AuditEventType.PRODUCT_DELETED,
+      actorUserId: actorId,
+      entityType: AuditEntityType.PRODUCT,
+      entityId: id,
+      summary: `Deleted "${product.name}" (SKU ${product.sku})`,
+    });
   }
 
   private attachStock(

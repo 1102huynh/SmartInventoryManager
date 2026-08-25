@@ -8,6 +8,10 @@ tools/*.log
 **/dist/
 **/coverage/
 
+# Local dev server output (backend-run.log, frontend-run.log)
+backend/*.log
+frontend/*.log
+
 # Env
 **/.env
 

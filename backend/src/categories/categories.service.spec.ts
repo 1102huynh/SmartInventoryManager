@@ -1,6 +1,8 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { AuditService } from '../audit/audit.service';
+import { AuditEventType } from '../common/enums/audit-event-type.enum';
 import { CategoriesService } from './categories.service';
 import { Category } from './category.entity';
 
@@ -18,6 +20,8 @@ describe('CategoriesService', () => {
     save: jest.fn((v) => Promise.resolve({ id: 1, ...v })),
     remove: jest.fn((v) => Promise.resolve(v)),
   };
+  const auditService = { record: jest.fn() };
+  const ACTOR_ID = 99;
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -25,6 +29,7 @@ describe('CategoriesService', () => {
       providers: [
         CategoriesService,
         { provide: getRepositoryToken(Category), useValue: repo },
+        { provide: AuditService, useValue: auditService },
       ],
     }).compile();
     service = moduleRef.get(CategoriesService);
@@ -33,16 +38,30 @@ describe('CategoriesService', () => {
   describe('create — name uniqueness', () => {
     it('creates the category when the name is not already in use', async () => {
       repo.findOne.mockResolvedValue(null);
-      await service.create({ name: 'Beverages' });
+      await service.create({ name: 'Beverages' }, ACTOR_ID);
       expect(repo.save).toHaveBeenCalled();
     });
 
     it('rejects creation with ConflictException when the name is already taken', async () => {
       repo.findOne.mockResolvedValue({ id: 1, name: 'Beverages' });
       await expect(
-        service.create({ name: 'Beverages' }),
+        service.create({ name: 'Beverages' }, ACTOR_ID),
       ).rejects.toBeInstanceOf(ConflictException);
       expect(repo.save).not.toHaveBeenCalled();
+    });
+
+    // Phase 9 (docs/phase-9-plan.md §2 "each write method records its event with the
+    // actor it was passed").
+    it('records category_created with the actor', async () => {
+      repo.findOne.mockResolvedValue(null);
+      const created = await service.create({ name: 'Beverages' }, ACTOR_ID);
+      expect(auditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: AuditEventType.CATEGORY_CREATED,
+          actorUserId: ACTOR_ID,
+          entityId: created.id,
+        }),
+      );
     });
   });
 
@@ -50,7 +69,7 @@ describe('CategoriesService', () => {
     it('rejects when the target category does not exist', async () => {
       repo.findOne.mockResolvedValueOnce(null);
       await expect(
-        service.update(99, { name: 'Beverages' }),
+        service.update(99, { name: 'Beverages' }, ACTOR_ID),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
@@ -59,11 +78,13 @@ describe('CategoriesService', () => {
       // for SKU — resubmitting the same name (e.g. a form re-posting its current
       // state) must not run the uniqueness check at all.
       repo.findOne.mockResolvedValueOnce({ id: 1, name: 'Beverages' }); // fetch
-      await service.update(1, { name: 'Beverages' });
+      await service.update(1, { name: 'Beverages' }, ACTOR_ID);
       expect(repo.findOne).toHaveBeenCalledTimes(1);
       expect(repo.save).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'Beverages' }),
       );
+      // No-op update: nothing actually changed, so nothing to record.
+      expect(auditService.record).not.toHaveBeenCalled();
     });
 
     it('re-checks name availability and rejects when renaming to a name already in use', async () => {
@@ -71,18 +92,25 @@ describe('CategoriesService', () => {
         .mockResolvedValueOnce({ id: 1, name: 'Beverages' }) // fetch the category being updated
         .mockResolvedValueOnce({ id: 2, name: 'Snacks' }); // assertNameAvailable: taken
       await expect(
-        service.update(1, { name: 'Snacks' }),
+        service.update(1, { name: 'Snacks' }, ACTOR_ID),
       ).rejects.toBeInstanceOf(ConflictException);
       expect(repo.save).not.toHaveBeenCalled();
     });
 
-    it('renames when the new name is free', async () => {
+    it('renames when the new name is free, and records category_updated', async () => {
       repo.findOne
         .mockResolvedValueOnce({ id: 1, name: 'Beverages' })
         .mockResolvedValueOnce(null);
-      await service.update(1, { name: 'Snacks' });
+      await service.update(1, { name: 'Snacks' }, ACTOR_ID);
       expect(repo.save).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'Snacks' }),
+      );
+      expect(auditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: AuditEventType.CATEGORY_UPDATED,
+          actorUserId: ACTOR_ID,
+          entityId: 1,
+        }),
       );
     });
   });
@@ -90,7 +118,7 @@ describe('CategoriesService', () => {
   describe('remove', () => {
     it('rejects when the target category does not exist', async () => {
       repo.findOne.mockResolvedValueOnce(null);
-      await expect(service.remove(99)).rejects.toBeInstanceOf(
+      await expect(service.remove(99, ACTOR_ID)).rejects.toBeInstanceOf(
         NotFoundException,
       );
     });
@@ -102,9 +130,24 @@ describe('CategoriesService', () => {
     it('deletes without any history/usage pre-check', async () => {
       const category = { id: 1, name: 'Beverages' };
       repo.findOne.mockResolvedValueOnce(category);
-      await service.remove(1);
+      await service.remove(1, ACTOR_ID);
       expect(repo.findOne).toHaveBeenCalledTimes(1);
       expect(repo.remove).toHaveBeenCalledWith(category);
+    });
+
+    // §1 "entity_id is deliberately NOT a foreign key": the audit row is written
+    // with the category's id even though the row is already gone by that point.
+    it('records category_deleted with the actor, after the row is removed', async () => {
+      const category = { id: 1, name: 'Beverages' };
+      repo.findOne.mockResolvedValueOnce(category);
+      await service.remove(1, ACTOR_ID);
+      expect(auditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: AuditEventType.CATEGORY_DELETED,
+          actorUserId: ACTOR_ID,
+          entityId: 1,
+        }),
+      );
     });
   });
 });

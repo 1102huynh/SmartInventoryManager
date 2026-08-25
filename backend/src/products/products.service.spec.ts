@@ -1,6 +1,8 @@
 import { ConflictException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { AuditService } from '../audit/audit.service';
+import { AuditEventType } from '../common/enums/audit-event-type.enum';
 import { InventoryService } from '../inventory/inventory.service';
 import { Product } from './product.entity';
 import { ProductsService } from './products.service';
@@ -21,10 +23,13 @@ describe('ProductsService', () => {
     findOne: jest.fn(),
     create: jest.fn((v) => v),
     save: jest.fn((v) => Promise.resolve({ id: 1, ...v })),
+    remove: jest.fn((v) => Promise.resolve(v)),
   };
   const inventoryService = {
     hasHistory: jest.fn(),
   };
+  const auditService = { record: jest.fn() };
+  const ACTOR_ID = 99;
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -33,6 +38,7 @@ describe('ProductsService', () => {
         ProductsService,
         { provide: getRepositoryToken(Product), useValue: repo },
         { provide: InventoryService, useValue: inventoryService },
+        { provide: AuditService, useValue: auditService },
       ],
     }).compile();
     service = moduleRef.get(ProductsService);
@@ -45,16 +51,33 @@ describe('ProductsService', () => {
   describe('create — SKU uniqueness', () => {
     it('creates the product when the SKU is not already in use', async () => {
       repo.findOne.mockResolvedValue(null);
-      await service.create({ name: 'Widget', sku: 'W-1', unit: 'each' });
+      await service.create({ name: 'Widget', sku: 'W-1', unit: 'each' }, ACTOR_ID);
       expect(repo.save).toHaveBeenCalled();
     });
 
     it('rejects creation with ConflictException when the SKU is already taken', async () => {
       repo.findOne.mockResolvedValue({ id: 1, sku: 'W-1' });
       await expect(
-        service.create({ name: 'Widget', sku: 'W-1', unit: 'each' }),
+        service.create({ name: 'Widget', sku: 'W-1', unit: 'each' }, ACTOR_ID),
       ).rejects.toBeInstanceOf(ConflictException);
       expect(repo.save).not.toHaveBeenCalled();
+    });
+
+    // Phase 9 (docs/phase-9-plan.md §2 "each write method records its event with the
+    // actor it was passed").
+    it('records product_created with the actor and no subject (an inventory item, not an account)', async () => {
+      repo.findOne.mockResolvedValue(null);
+      const created = await service.create(
+        { name: 'Widget', sku: 'W-1', unit: 'each' },
+        ACTOR_ID,
+      );
+      expect(auditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: AuditEventType.PRODUCT_CREATED,
+          actorUserId: ACTOR_ID,
+          entityId: created.id,
+        }),
+      );
     });
   });
 
@@ -86,11 +109,15 @@ describe('ProductsService', () => {
         .mockResolvedValueOnce(null); // assertSkuAvailable: no other product uses 'W-2'
       inventoryService.hasHistory.mockResolvedValue(false);
 
-      await service.update(1, {
-        name: 'Widget',
-        unit: 'each',
-        sku: 'W-2',
-      });
+      await service.update(
+        1,
+        {
+          name: 'Widget',
+          unit: 'each',
+          sku: 'W-2',
+        },
+        ACTOR_ID,
+      );
 
       expect(inventoryService.hasHistory).toHaveBeenCalledWith(1);
       expect(repo.save).toHaveBeenCalledWith(
@@ -103,7 +130,7 @@ describe('ProductsService', () => {
       inventoryService.hasHistory.mockResolvedValue(true);
 
       await expect(
-        service.update(1, { name: 'Widget', unit: 'each', sku: 'W-2' }),
+        service.update(1, { name: 'Widget', unit: 'each', sku: 'W-2' }, ACTOR_ID),
       ).rejects.toBeInstanceOf(ConflictException);
       // Rejected before ever checking whether 'W-2' itself is free — findOne should
       // only have been called once, to fetch the product.
@@ -115,11 +142,15 @@ describe('ProductsService', () => {
       repo.findOne.mockResolvedValueOnce(existingProduct());
       inventoryService.hasHistory.mockResolvedValue(true); // even with history —
 
-      await service.update(1, {
-        name: 'Widget Renamed',
-        unit: 'each',
-        sku: 'W-1', // identical to the product's current SKU
-      });
+      await service.update(
+        1,
+        {
+          name: 'Widget Renamed',
+          unit: 'each',
+          sku: 'W-1', // identical to the product's current SKU
+        },
+        ACTOR_ID,
+      );
 
       // The history check exists to gate an *actual* SKU change — sending the same
       // value back (e.g. a form re-submitting its current state) must not trigger it,
@@ -134,12 +165,58 @@ describe('ProductsService', () => {
       repo.findOne.mockResolvedValueOnce(existingProduct());
       inventoryService.hasHistory.mockResolvedValue(true); // even with history —
 
-      await service.update(1, { name: 'Widget Renamed', unit: 'each' });
+      await service.update(1, { name: 'Widget Renamed', unit: 'each' }, ACTOR_ID);
 
       expect(inventoryService.hasHistory).not.toHaveBeenCalled();
       expect(repo.save).toHaveBeenCalledWith(
         expect.objectContaining({ sku: 'W-1' }),
       );
+    });
+  });
+
+  // Phase 9 (post-review fix): remove() had no coverage at all — the unit layer's
+  // job here is to prove the RIGHT thing gets recorded, with the RIGHT actor/entity,
+  // after the row is gone; audit.e2e-spec.ts proves the row genuinely survives with
+  // no foreign key to enforce otherwise (§1 "entity_id is deliberately NOT a foreign
+  // key").
+  describe('remove', () => {
+    function existingProduct(): Product {
+      return {
+        id: 1,
+        sku: 'W-1',
+        name: 'Widget',
+        unit: 'each',
+        categoryId: null,
+        lowStockThreshold: null,
+      } as Product;
+    }
+
+    it('records product_deleted with the actor, after the row is removed', async () => {
+      repo.findOne.mockResolvedValueOnce(existingProduct());
+      inventoryService.hasHistory.mockResolvedValue(false);
+
+      await service.remove(1, ACTOR_ID);
+
+      expect(repo.remove).toHaveBeenCalled();
+      expect(auditService.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: AuditEventType.PRODUCT_DELETED,
+          actorUserId: ACTOR_ID,
+          entityId: 1,
+          summary: expect.stringContaining('W-1'),
+        }),
+      );
+    });
+
+    it('records nothing when the delete is rejected for having history', async () => {
+      repo.findOne.mockResolvedValueOnce(existingProduct());
+      inventoryService.hasHistory.mockResolvedValue(true);
+
+      await expect(service.remove(1, ACTOR_ID)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(repo.remove).not.toHaveBeenCalled();
+      expect(auditService.record).not.toHaveBeenCalled();
     });
   });
 });

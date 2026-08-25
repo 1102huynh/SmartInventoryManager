@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { DataSource } from 'typeorm';
+import { AuditEvent } from '../audit/audit-event.entity';
 import { Category } from '../categories/category.entity';
 import { InventoryTransaction } from '../inventory/inventory-transaction.entity';
 import { Product } from '../products/product.entity';
@@ -19,7 +20,7 @@ export const AppDataSource = new DataSource({
   username: process.env.DB_USERNAME ?? 'postgres',
   password: process.env.DB_PASSWORD ?? '',
   database: process.env.DB_DATABASE ?? 'smart_inventory',
-  entities: [Category, Supplier, Product, InventoryTransaction, User],
+  entities: [Category, Supplier, Product, InventoryTransaction, User, AuditEvent],
   migrations: ['src/database/migrations/*.ts'],
   synchronize: false,
 });

@@ -48,6 +48,8 @@ complex logistics, or multi-warehouse operations.
 - Be alerted when a product's stock is running low, before it runs out.
 - See a quick overview of inventory health without manual reporting.
 - Trust that historical records are accurate and cannot be silently altered.
+- Know who changed what, and when — for accounts and catalog data, not just stock.
+  [Added 2026-08-25, Phase 9]
 
 ## 5. Core Use Cases
 
@@ -60,6 +62,8 @@ complex logistics, or multi-warehouse operations.
 7. Manager reviews the transaction history of a product (or of the whole inventory).
 8. Manager reviews the list of products currently low on stock.
 9. Manager opens the dashboard to get a quick health overview of the inventory.
+10. An Owner reviews the audit log after a colleague reports they cannot sign in.
+    [Added 2026-08-25, Phase 9]
 
 ## 6. Product Scope
 
@@ -180,3 +184,10 @@ These affect the UI mockup and should be resolved before or during that phase.
   Q-7 remain exactly as open as before) and adds no new scope to §7; it's the
   follow-on named in `docs/phase-6-plan.md` §7's "`created_at`/`updated_at` on
   `users`" line, now done.
+- **[Added 2026-08-25, Phase 9]** The audit log (`docs/phase-9-plan.md`,
+  `business-rules.md` BR-082–084, `requirements.md` FR-065) — this phase's one
+  genuine product-level edit, unlike Phase 7's: §4 gained a user goal and §5 gained a
+  use case above. It resolves **none** of §10's open questions — Q-4, Q-6, and Q-7
+  remain exactly as open as before — and in particular is **not** a resolution of
+  Q-6 despite the surface resemblance: a log records what happened; an approval
+  gates what may happen. Different features.

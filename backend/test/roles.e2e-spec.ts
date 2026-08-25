@@ -316,6 +316,16 @@ describe('Roles / authorization (e2e)', () => {
     );
     const staffId: number = staffRow[0].id;
     const orphanToken = jwtService.sign({ sub: staffId });
+    // Phase 9 (docs/phase-9-plan.md §1): this beforeEach's staff login already wrote
+    // a login_succeeded audit_events row with a RESTRICT foreign key to this user
+    // (BR-076 — the same guarantee inventory_transactions.recorded_by_user_id
+    // relies on) — a real app path never deletes a user row at all, but this test
+    // deliberately does, via raw SQL, purely to construct the orphaned-token
+    // scenario below, so the audit row has to be cleared first to allow it.
+    await dataSource.query(
+      'DELETE FROM audit_events WHERE actor_user_id = $1 OR subject_user_id = $1',
+      [staffId],
+    );
     await dataSource.query('DELETE FROM users WHERE id = $1', [staffId]);
 
     const res = await request(app.getHttpServer())

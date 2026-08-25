@@ -209,6 +209,60 @@ involved.
   no lock check, so a locked account's already-issued, unexpired token keeps working;
   the lock blocks *obtaining* a new one, not using one already held. → FR-060
 
+## Audit Log
+
+- **BR-082** [Decided 2026-08-25, Phase 9] — **Every administrative and
+  authentication event is recorded, and the record is append-only.** A closed list of
+  event types (`docs/phase-9-plan.md` §1) is written to `audit_events` as it happens;
+  rows are never updated or deleted by any code path in this application. The record
+  names the **actor** (the authenticated principal who acted, `NULL` for anonymous
+  events) and the **subject** (the account the event is about) as two distinct facts
+  — a failed login has a subject and no actor, because the person who typed the wrong
+  password is precisely not the account holder. Recording is **best-effort**: a
+  failed audit write never fails the operation it describes
+  (`AuditService.record`'s `try/catch`), so the log is a *record*, not a *proof*. The
+  client address is captured on authentication events only (`actorIp`, `NULL` on
+  every administrative event) — this is personal data, in a table with no retention
+  limit (see "Explicitly out of scope," Phase 9 §7).
+  - **Not every credential-verification failure is recorded.** `PATCH
+    /auth/password` (a self-service password change) records nothing when the
+    supplied *current* password is wrong — a deliberate exclusion, not an oversight.
+    The closed list in `docs/phase-9-plan.md` §1 covers authentication (login) and
+    administrative writes; a wrong `currentPassword` is neither — the caller already
+    holds a valid token, so the only realistic guesser is the account's own holder
+    fumbling their own password (the same reasoning BR-079's throttle-without-lock
+    treats this route by). It is the one credential-verification failure in the app
+    that leaves no trace in `audit_events`; `PATCH /auth/password`'s throttle
+    response (BR-079) still applies. Revisit if this route is ever given its own
+    lockout.
+  - **`audit_events.actor_user_id`/`subject_user_id` are real `RESTRICT` foreign
+    keys to `users`** (safe only because of BR-076 — a `users` row can never
+    disappear out from under an audit row). One consequence worth naming: any
+    out-of-band `DELETE FROM users` (there is no in-app path that does this — see
+    BR-076) now fails once that user has so much as logged in once, exactly the way
+    it already failed once that user had recorded an `inventory_transactions` row.
+    `backend/test/roles.e2e-spec.ts`'s orphaned-token test had to learn this — see
+    its own comment. → BR-076
+  → FR-065
+- **BR-083** [Decided 2026-08-25, Phase 9] — **Stock movements are not duplicated
+  into the audit log.** `inventory_transactions` is already the immutable, attributed
+  record of every stock-in, stock-out, and adjustment (BR-050, BR-051). The audit log
+  records what happens *to* the system — accounts, roles, credentials, catalog data,
+  authentication — never what happens *in* it. Two records of one fact could drift,
+  and the ordinary daily traffic would bury the handful of administrative events the
+  log exists for. → BR-050, BR-051
+- **BR-084** [Decided 2026-08-25, Phase 9] — **The audit log is Owner-only.** It
+  contains failed login attempts against named accounts — not merely which accounts
+  exist, but which are currently being attacked and which are close to lockout.
+  Phase 3 closed enumeration from the outside and BR-081 closed it from a second
+  direction; opening this read to Staff would reopen it from the inside. Enforced by
+  a class-level `@Roles(UserRole.Owner)` on `AuditController`, the second controller
+  to use the class-level form after BR-074's `UsersController`. → FR-065, BR-074
+
+BR-078 gains a cross-reference: an Owner's reset is recorded as `user_password_reset`
+(BR-082), and the lock it clears is visible in the same log (`setPassword`'s summary
+notes the clear).
+
 ## Rules Explicitly Deferred (Future scope, not defined now)
 
 - Pricing/cost rules (cost of goods, valuation) — depends on product.md Q-1.

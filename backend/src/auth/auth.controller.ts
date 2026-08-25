@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../common/decorators/public.decorator';
+import { ClientIp } from '../common/decorators/client-ip.decorator';
 import { CurrentUserId } from '../common/decorators/current-user-id.decorator';
 import loadConfig from '../config/configuration';
 import { UsersService } from '../users/users.service';
@@ -61,8 +62,12 @@ export class AuthController {
   @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK) // a login isn't creating a resource, so 200 rather than 201
-  async login(@Body() dto: LoginDto) {
-    const user = await this.authService.validateUser(dto.email, dto.password);
+  async login(@Body() dto: LoginDto, @ClientIp() ip: string | null) {
+    const user = await this.authService.validateUser(
+      dto.email,
+      dto.password,
+      ip,
+    );
     if (!user) {
       throw new UnauthorizedException('Invalid email or password.');
     }

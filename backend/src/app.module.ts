@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { CategoriesModule } from './categories/categories.module';
 import configuration, { AppConfig } from './config/configuration';
@@ -44,6 +45,7 @@ import { UsersModule } from './users/users.module';
       }),
     }),
     DatabaseModule,
+    AuditModule,
     AuthModule,
     CategoriesModule,
     SuppliersModule,

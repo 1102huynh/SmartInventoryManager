@@ -1,6 +1,6 @@
-# API Documentation — Phase 8
+# API Documentation — Phase 9
 
-Status: Phase 8 — Login Rate Limiting & Account Lockout
+Status: Phase 9 — Audit Log
 Base URL: `http://localhost:3000` (see `backend/.env.example`)
 
 Every resource response includes `createdAt` (an ISO timestamp, server-set, never
@@ -50,6 +50,12 @@ default (120 requests / 60 seconds per client address); `POST /auth/login` and
 minutes) — the throttler guard runs first, ahead of `JwtAuthGuard`, so an over-limit
 request never reaches password verification (BR-079). Both limits are configurable
 (`backend/.env.example`).
+
+**Phase 9 (`docs/phase-9-plan.md`): every write on `/users`, `/products`,
+`/suppliers`, and `/categories` now also records an audit event** (BR-082), and every
+`POST /auth/login` attempt does too. This is a side effect, not a documented response
+change — no route below gains a new field, status code, or error shape because of it;
+see the "Audit Log" section for the one new route this phase actually adds.
 
 ## Auth
 
@@ -133,7 +139,9 @@ delete endpoint — `PATCH /users/:id/status` is the whole lifecycle (BR-076). N
 response body from any of these routes ever includes `passwordHash` — and, as of
 Phase 8, never `failedLoginAttempts` or `lockedUntil` either (both `@Exclude()`d,
 same as `passwordHash`; operational security state, not safe to expose even to other
-authenticated users via a nested `recordedBy`).
+authenticated users via a nested `recordedBy`). As of Phase 9, every write below
+(`POST`/`PATCH`/`PATCH .../status`/`PATCH .../password`) also records an event in the
+audit log — see "Audit Log" below.
 
 | Method | Path | Body | Notes |
 |---|---|---|---|
@@ -143,3 +151,26 @@ authenticated users via a nested `recordedBy`).
 | PATCH | `/users/:id` | `{ name?, email?, role? }` | Name/email/role only — never password. 409 on duplicate email. 409 (BR-075) when the change would demote the last active Owner. Response has no `locked` field, same reason as `POST` above — re-fetch via `GET` to see current lock status. |
 | PATCH | `/users/:id/status` | `{ status: "active"\|"inactive" }` | 409 (BR-075) when the change would deactivate the last active Owner. Deactivation takes effect on the user's very next request (BR-077), not at their token's expiry. |
 | PATCH | `/users/:id/password` | `{ newPassword }` | `204`. An Owner's *reset*, not a *recovery* — no current password required, the old one is never shown. `newPassword` must be at least 8 characters. Also clears a Phase 8 lock (BR-078/BR-080) — this is the unlock mechanism; there is no separate unlock route. |
+
+## Audit Log
+
+**Owner only** — a single class-level `@Roles(UserRole.Owner)` on `AuditController`
+(BR-084), the second controller in the app to use the class-level form after
+`UsersController` above. Newest-first (`id DESC`), no offset pagination — filters
+plus a `limit` (default 100, max 500; a larger request is `400`, not silently
+clamped) are the only way to narrow a result. A read event's `actor` and `subject`
+are full nested `User` objects (a joined read, the same choice `GET
+/inventory-transactions` makes for `recordedBy`) — `null` on either when there's no
+actor (every anonymous authentication event) or no subject (an administrative event
+about a product, supplier, or category, not a user). `entityType`/`entityId` name the
+non-user target of an administrative event and are **not** a foreign key — an event
+about a deleted product still names it, by id, after the product itself is gone
+(BR-082).
+
+| Method | Path | Query | Notes |
+|---|---|---|---|
+| GET | `/audit-events` | `?eventType=&actorUserId=&subjectUserId=&days=&limit=` | `eventType` is one of the closed list in `docs/phase-9-plan.md` §1 (`login_succeeded`, `login_failed`, `account_locked`, `password_changed`, `user_created`, `user_updated`, `user_status_changed`, `user_password_reset`, `product_created`, `product_updated`, `product_status_changed`, `product_deleted`, `supplier_created`, `supplier_updated`, `supplier_status_changed`, `category_created`, `category_updated`, `category_deleted`). `days` and `limit` are both validated (`days >= 1`, `1 <= limit <= 500`) — an out-of-range value is `400`, never silently reinterpreted. |
+
+Response items: `{ id, eventType, actor: User|null, actorUserId: number|null, subject: User|null, subjectUserId: number|null, entityType: string|null, entityId: number|null, summary: string, actorIp: string|null, createdAt }`. `actorIp` is set only on authentication events (`login_succeeded`/`login_failed`/`account_locked`) — `null` on every administrative one (scope fork A, `docs/phase-9-plan.md` §1). `summary` is a short human sentence composed by the service that recorded the event — never a field-level diff, and never a password, hash, or token.
+
+**Not every `401` on this API reaches the audit log.** `PATCH /auth/password`'s wrong-`currentPassword` case (above) records nothing — the caller already holds a valid token, and the closed list this phase records covers authentication (login) and administrative writes, neither of which that case is (BR-082).

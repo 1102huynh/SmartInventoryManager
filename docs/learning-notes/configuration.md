@@ -23,23 +23,42 @@ directly:
 export default (): AppConfig => ({
   port: parseInt(process.env.PORT ?? '3000', 10),
   database: { host: process.env.DB_HOST ?? '127.0.0.1', /* ... */ },
+  auth: { jwtSecret: process.env.JWT_SECRET ?? 'dev-only-insecure-secret-change-me', /* ... */ },
+  security: { maxFailedLoginAttempts: parseInt(process.env.AUTH_MAX_FAILED_ATTEMPTS ?? '5', 10), /* ... */ },
 });
 ```
 
+Two sections were added after this note was first written: `auth` (Phase 3,
+`docs/phase-3-plan.md`) — the JWT signing secret and token expiry — and `security`
+(Phase 8, `docs/phase-8-plan.md`) — login-lockout thresholds and both throttlers'
+limits. Both follow the same shape as `database`: typed fields with sensible local
+defaults, read from `process.env` in exactly one place. `security.lockoutMinutes`
+uses `parseFloat`, not `parseInt`, on purpose — the e2e suite needs a lockout window
+measured in a fraction of a minute (a few seconds) to prove the lock auto-expires
+without an actual fifteen-minute wait, and `parseInt` would truncate that to `0` and
+defeat the test.
+
 `AppModule` loads it via `ConfigModule.forRoot({ isGlobal: true, load: [configuration] })`
 — `isGlobal: true` means any module can inject `ConfigService` without re-importing
-`ConfigModule`. `DatabaseModule` is the main consumer, via `forRootAsync` (see
+`ConfigModule`. `DatabaseModule` was the first consumer, via `forRootAsync` (see
 `docs/learning-notes/database-access.md` and the comment in
 `backend/src/database/database.module.ts` for why the *async* variant is needed
 here specifically: the database connection options depend on `ConfigService`, which
-itself depends on `.env` having been parsed first).
+itself depends on `.env` having been parsed first) — `AuthModule`'s
+`JwtModule.registerAsync` (the signing secret) and `AppModule`'s
+`ThrottlerModule.forRootAsync` (the rate limits) later reused the same
+`imports`/`inject`/`useFactory` shape, for the identical reason.
 
 ## Example
 
-`backend/.env.example` documents every variable the app reads (`PORT`, `DB_HOST`,
-`DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_DATABASE`) with working defaults for the
-portable local Postgres in `tools/` — copy it to `.env` and the app runs with zero
-further setup.
+`backend/.env.example` documents every variable the app reads — `PORT`, `DB_HOST`,
+`DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_DATABASE` for the portable local
+Postgres in `tools/`; `JWT_SECRET`/`JWT_EXPIRES_IN` for auth; and
+`AUTH_MAX_FAILED_ATTEMPTS`/`AUTH_LOCKOUT_MINUTES`/`THROTTLE_TTL_SECONDS`/
+`THROTTLE_LIMIT`/`THROTTLE_LOGIN_TTL_SECONDS`/`THROTTLE_LOGIN_LIMIT` for rate
+limiting and account lockout (see
+`docs/learning-notes/authentication-and-guards.md`) — all with working defaults, so
+copying it to `.env` gets the app running with zero further setup.
 
 ## Common Mistakes
 

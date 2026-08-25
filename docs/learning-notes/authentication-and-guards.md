@@ -119,15 +119,18 @@ claimed" to "who the server cryptographically verified."
 ### Hashing vs. encryption
 
 `AuthService.validateUser` compares a submitted password against `User.passwordHash`
-using `bcrypt.compare()` — never by decrypting a stored value back to plaintext.
-Hashing and encryption solve different problems: encryption is reversible (given the
-right key, you get the original data back); a password hash is deliberately **one-way**.
-Nothing — not even the application itself — can turn a bcrypt hash back into the
-original password. The only way to check a guess is to hash the guess the same way and
-compare the two hashes. That's the entire reason `bcrypt.compare(plaintext, hash)`
-exists as its own function instead of "decrypt, then `===`": decrypt-and-compare would
-require encryption (reversible, and therefore a much bigger liability if the database
-ever leaks), when one-way hashing is both simpler and safer for this exact problem.
+using `verifyPassword()` (`src/common/password.ts`, a thin wrapper around
+`bcrypt.compare()` — see "Where password hashing belongs" below for why it's a
+standalone function rather than a method on `AuthService` itself) — never by
+decrypting a stored value back to plaintext. Hashing and encryption solve different
+problems: encryption is reversible (given the right key, you get the original data
+back); a password hash is deliberately **one-way**. Nothing — not even the
+application itself — can turn a bcrypt hash back into the original password. The
+only way to check a guess is to hash the guess the same way and compare the two
+hashes. That's the entire reason `bcrypt.compare(plaintext, hash)` exists as its own
+function instead of "decrypt, then `===`": decrypt-and-compare would require
+encryption (reversible, and therefore a much bigger liability if the database ever
+leaks), when one-way hashing is both simpler and safer for this exact problem.
 
 ### Authorization is a different question than authentication
 

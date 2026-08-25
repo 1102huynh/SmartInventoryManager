@@ -14,6 +14,19 @@ project's actual code under `backend/src/`. Read the individual notes
 [testing-strategy.md](testing-strategy.md)) for the concept-by-concept "what/why";
 this one is the "how it all fits together, in this codebase, right now."
 
+**A snapshot, not a living document.** This review is dated to Phase 2, before
+authentication existed at all — Phase 3 onward added `AuthModule`, JWT-based
+identity, and later role-based authorization and rate limiting, none of which this
+document was updated to reflect. Two specific claims below are now out of date as a
+result (each is flagged inline where it appears): the request-lifecycle walkthroughs
+still describe `@CurrentUserId()` reading a client-supplied `x-user-id` header, and
+§2's module count predates `AuthModule`. For the current, accurate picture of
+authentication and authorization, see
+[authentication-and-guards.md](authentication-and-guards.md); everything else below
+— modules, controllers/services, DTOs, database access, transactions, exception
+handling, configuration, testing — was re-checked against the code on 2026-08-24 and
+still holds.
+
 ---
 
 ## 1. Overall Architecture
@@ -51,7 +64,7 @@ of a thin pass-through the frontend could get out of sync with.
 | Piece | File(s) | Role |
 |---|---|---|
 | `main.ts` | `backend/src/main.ts` | Bootstraps the app: creates it, turns on CORS, registers the global `ValidationPipe` and `AllExceptionsFilter`, starts listening |
-| `AppModule` | `backend/src/app.module.ts` | The root of the module tree — imports `ConfigModule`, `DatabaseModule`, and all six feature modules |
+| `AppModule` | `backend/src/app.module.ts` | The root of the module tree — imports `ConfigModule`, `DatabaseModule`, and all six feature modules (**outdated**: `AuthModule` and `ThrottlerModule` joined this list from Phase 3/8 onward — see [nestjs-modules.md](nestjs-modules.md)) |
 | Feature Modules | `categories/categories.module.ts`, `suppliers/suppliers.module.ts`, `products/products.module.ts`, `inventory/inventory.module.ts`, `users/users.module.ts`, `dashboard/dashboard.module.ts` | Each declares its own controller(s), service(s), and which entities it needs a repository for |
 | Controllers | `*.controller.ts` in each feature folder | HTTP-facing — route → method → call one service method |
 | Services | `*.service.ts` in each feature folder | Business logic and orchestration |
@@ -104,8 +117,11 @@ HTTP Request → ValidationPipe → Controller → Service → Database → Resp
 - **Validation**: `CreateStockInDto` (`inventory/dto/create-stock-in.dto.ts`) —
   `quantity` integer `>= 1`, `occurredAt` ISO date string, `supplierId` optional integer.
 - **Controller**: `InventoryController.recordStockIn` (`inventory.controller.ts:26-33`)
-  — pulls `productId` (`@Param`), `dto` (`@Body`), and `userId` (`@CurrentUserId()`,
-  a custom decorator reading the `x-user-id` header).
+  — pulls `productId` (`@Param`), `dto` (`@Body`), and `userId` (`@CurrentUserId()`).
+  **Outdated as of Phase 3**: at the time this review was written, `@CurrentUserId()`
+  read a client-supplied `x-user-id` header and trusted it outright. It now reads
+  `request.user.id`, populated by `JwtAuthGuard`'s Passport strategy from a verified
+  JWT — see [authentication-and-guards.md](authentication-and-guards.md).
 - **Service**: `InventoryService.recordStockIn` (`inventory.service.ts:130-151`) —
   opens a transaction, locks the product row, checks it's active, validates the
   supplier if given, inserts the transaction row.

@@ -20,10 +20,13 @@ This is what makes a feature genuinely swappable or testable in isolation.
 
 ## How it works in this project
 
-`backend/src/app.module.ts` is the root — it imports `ConfigModule`, `DatabaseModule`,
-and one module per feature (`CategoriesModule`, `SuppliersModule`, `InventoryModule`,
-`ProductsModule`, `UsersModule`, `DashboardModule`). Each feature module is small and
-self-contained, e.g. `backend/src/categories/categories.module.ts`:
+`backend/src/app.module.ts` is the root — it imports `ConfigModule`, `ThrottlerModule`
+(Phase 8, `docs/phase-8-plan.md` — app-wide rate-limiting configuration; the *guard*
+that enforces it is registered in `AuthModule`, not here, so all three global guards'
+relative order lives in one place, see `docs/learning-notes/authentication-and-guards.md`),
+`DatabaseModule`, `AuthModule` (Phase 3), and one module per feature (`CategoriesModule`,
+`SuppliersModule`, `InventoryModule`, `ProductsModule`, `UsersModule`, `DashboardModule`).
+Each feature module is small and self-contained, e.g. `backend/src/categories/categories.module.ts`:
 
 ```ts
 @Module({

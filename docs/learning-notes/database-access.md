@@ -108,9 +108,12 @@ is supposed to bump `updated_at`, and does.
   the dedicated test datasource (`database/test-data-source.ts`), where wiping the
   schema on every run is the entire point.
 - Calling `repository.delete({})` to clear a table — TypeORM refuses an empty
-  criteria object as a safety guard. The seed script
-  (`database/seeds/run-seed.ts`) uses a query-builder delete with no `.where()`
-  instead, which is the deliberate "yes, delete everything" escape hatch.
+  criteria object as a safety guard. The seed script (`database/seeds/run-seed.ts`)
+  reaches past the repository API entirely for this — `manager.query('TRUNCATE
+  TABLE ... RESTART IDENTITY CASCADE')` — which is the deliberate "yes, delete
+  everything, and reset the id sequences too" escape hatch: a repository-level
+  delete has no equivalent for `RESTART IDENTITY`, and `TRUNCATE ... CASCADE` also
+  sidesteps having to delete child rows before parent rows by hand.
 
 ## Key Takeaways
 

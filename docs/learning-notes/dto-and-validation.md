@@ -26,6 +26,7 @@ app.useGlobalPipes(new ValidationPipe({
   whitelist: true,          // strip properties not declared on the DTO
   forbidNonWhitelisted: true, // ...and reject the request if it sent one
   transform: true,          // turn plain JSON/query strings into real DTO instances
+  transformOptions: { enableImplicitConversion: true }, // e.g. a query string "20" -> 20
 }));
 ```
 

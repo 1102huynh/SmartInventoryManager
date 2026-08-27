@@ -77,6 +77,10 @@ export class AuditEvent {
   actorIp: string | null;
 
   // No @UpdateDateColumn, deliberately — see the class comment.
-  @CreateDateColumn({ name: 'created_at' })
+  // Phase 10 (docs/phase-10-plan.md): timestamptz, not timestamp — this is the
+  // column that made the deferred schema-wide conversion worth doing now (§1): it's
+  // written on every authentication attempt and read through a range query
+  // (IDX_audit_events_created_at, the `days` filter).
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 }

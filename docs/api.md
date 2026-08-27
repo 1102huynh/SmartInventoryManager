@@ -1,6 +1,6 @@
-# API Documentation — Phase 9
+# API Documentation — Phase 10
 
-Status: Phase 9 — Audit Log
+Status: Phase 10 — Schema-Wide `timestamptz`
 Base URL: `http://localhost:3000` (see `backend/.env.example`)
 
 Every resource response includes `createdAt` (an ISO timestamp, server-set, never
@@ -13,6 +13,10 @@ user-supplied business date the stock movement happened, not when the row was
 written — don't confuse the two when reading one. No route or request body reads or
 writes these columns; they ride every existing route's existing shape and role
 (Phase 7, `docs/phase-7-plan.md`).
+
+Every timestamp field in every response is an ISO instant, and always has been — as
+of Phase 10 (`docs/phase-10-plan.md`), the schema guarantees it rather than a
+convention doing so. **No route's shape, status code, or field list changes.**
 
 All request bodies are JSON. **Every route except `POST /auth/login` requires a valid
 token** — `Authorization: Bearer <accessToken>` (see "Auth" below and

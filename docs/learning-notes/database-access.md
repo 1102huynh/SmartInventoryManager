@@ -95,6 +95,133 @@ moved failed against a real database.
 unaffected by any of this — they use `repository.save()` on a loaded entity, which
 is supposed to bump `updated_at`, and does.
 
+## `timestamp` vs. `timestamptz` (Phase 10)
+
+`Product`, `Supplier`, `User`, `Category`, `InventoryTransaction`, and `AuditEvent`
+all declare their timestamp columns as `type: 'timestamptz'` now
+(`docs/phase-10-plan.md`). Before that, every one of them except
+`InventoryTransaction.occurredAt` was `type: 'timestamp'` — the difference is one
+type parameter, and it's worth understanding what it actually buys, because on this
+project's own dev machine it buys nothing observable.
+
+**A `timestamp without time zone` stores a clock reading, not an instant.** Postgres
+keeps exactly the digits it's given — year, month, day, hour, minute, second — and
+records no zone alongside them. `2026-08-25 15:50:04` means nothing on its own; it
+means something only once you know *which clock* wrote it. A
+`timestamp with time zone` (`timestamptz`) stores an actual instant: internally,
+Postgres converts whatever it's given to UTC and keeps that, displaying it back
+converted to whichever zone the current session is set to. Two sessions with
+different `TimeZone` settings see the same `timestamptz` value formatted two
+different ways; they see the same `timestamp` value as the same digits, correct or
+not.
+
+**What actually happens on write, measured rather than assumed — and "a TypeORM write"
+turned out to mean two different things.** This section already documented, since
+Phase 8, that `@CreateDateColumn`/`@UpdateDateColumn` don't hand `pg` a computed value
+when the entity carries none of its own (the only way any service in this codebase uses
+them): TypeORM emits the literal `DEFAULT` on `INSERT` and appends `CURRENT_TIMESTAMP`
+to `UPDATE`, letting Postgres's own expression evaluator fill it in — see "Audit
+timestamps" above. Filling this in from the *database* side means the value is computed
+**in Postgres's session zone**, and coerced into a naive `timestamp` column as digits in
+that zone, no different from a raw `DEFAULT now()`.
+
+That is not the only way a `Date` reaches this schema, though. `UsersService
+.registerFailedLogin`'s `user.lockedUntil = new Date(Date.now() + …)` is a value the
+*application* computes, with no database default to defer to — so TypeORM has no
+`DEFAULT`/`CURRENT_TIMESTAMP` to fall back on and must send the actual `Date` as a bound
+parameter instead. `pg` serializes it into a text parameter carrying an explicit UTC
+offset (`node_modules/pg/lib/utils.js`'s `dateToString`), so the value leaving Node
+unambiguously identifies an instant — but a naive `timestamp` column has nowhere to put
+that offset, so it's discarded and the digits kept are **Node's own local reading**, not
+Postgres's session zone at all. (Into a `timestamptz` column, by contrast, the offset is
+used directly and the instant is stored whatever either process's zone is.)
+
+The consequence is the one that surprises people, and it applies specifically to the
+`DEFAULT`/`CURRENT_TIMESTAMP` case: **a `@CreateDateColumn`/`@UpdateDateColumn` write and
+a `DEFAULT now()` write land in exactly the same place**, both as digits in the session
+zone, neither depending on Node's zone at all — while `locked_until`'s explicit-parameter
+write depends on Node's zone and not the session zone. This is not a reading of the
+driver's source alone — it is what the Phase 10 experiments measured, in two rounds:
+`backend/src/database/timestamps.integration.spec.ts` pins Postgres's session zone
+through `pg`'s `options: '-c timezone=<zone>'`, and with three different zones pinned,
+the `categories.created_at` digits tracked each one exactly while Node's real zone never
+moved — and a fourth run, reverting `users.locked_until` to plain `timestamp` under the
+same pinned harness, left that column's round trip correct regardless, because its
+digits had been tracking Node's zone the whole time, not the pinned one.
+
+**What happens on read.** `pg`'s parser (`postgres-date`) mirrors it. A `timestamptz`
+value arrives with its own offset attached, so the resulting `Date` is the right
+instant regardless of either side's zone. A plain `timestamp` value arrives as bare
+digits with no offset, and `postgres-date` builds the `Date` by treating them as
+**local time in the reading process's own zone** — Node's. Nothing in the value says
+which zone produced the digits, so nothing can correct for a difference.
+
+**Why "the column has no zone, so it must be UTC by convention" is a convention
+nothing enforces.** Put the two halves together for the `DEFAULT`/`CURRENT_TIMESTAMP`
+columns — every `created_at`/`updated_at` in this schema — and the asymmetry is the
+whole story: the digits are *written* in Postgres's session zone and *read* in Node's
+zone. Those two are different settings on different processes, and the round trip is
+correct only while they happen to be equal. Before Phase 10 they were equal, because
+both processes run on one developer's machine (`tools/README.md`) — nothing checked it,
+and nothing would have reported it breaking. `locked_until` doesn't share this
+asymmetry — its write zone is Node's too, same as its read zone — so its own failure
+mode is different, and narrower: not "the deployment's two zones disagree," but "Node's
+own zone changed between the write and a later read" (a restart onto a differently-zoned
+host, a DST transition).
+
+Note what the `created_at`/`updated_at` failure would look like, because it is not what
+the phase plan first predicted. It is not two rows disagreeing with each other — every
+`DEFAULT`/`CURRENT_TIMESTAMP` write uses the same session zone, so the table stays
+internally consistent and no comparison between rows would reveal anything. It is
+*every* value in *every* one of these columns reading back shifted by the same offset,
+uniformly and silently: the same digits either way, with nothing to distinguish a
+shifted read from an honest one. A defect you cannot find by comparing your own data
+against itself is a good argument for not storing the ambiguity in the first place.
+
+**`ALTER COLUMN ... TYPE timestamptz USING ... AT TIME ZONE '<zone>'` is the one
+place in this codebase's life where that assumption has to be written down and
+defended.** Converting an existing naive column with no `USING` clause interprets
+every value in the session's ambient `TimeZone` setting — silently reproducing the
+exact unrecorded-assumption problem the conversion exists to fix. Naming the zone as
+a literal (`docs/phase-10-plan.md`'s migration pins `SOURCE_ZONE = 'Asia/Ho_Chi_Minh'`)
+forces a reviewer to either agree with a stated fact or object to it; the implicit
+form asks the reviewer nothing and gets whatever the session happened to be set to.
+
+One literal isn't automatically enough, either — a lesson this migration only needed
+because of the write-path asymmetry above. Its ten audit columns and `locked_until`
+were written by different zones (Postgres's session, Node's, respectively), so the
+migration pins two constants, `SOURCE_ZONE` and `SOURCE_ZONE_NODE`, not one — equal on
+this project only because one machine runs both processes, and kept separate in the
+code specifically so a deployment where they differ has somewhere correct to say so.
+
+**The generalizable lesson**, in the shape this file's other sections use: a type
+that stores less than the value means has to be paid for by an agreement, and an
+agreement between two processes that neither one checks is not a design — it is a
+coincidence that has not failed yet.
+
+**A second lesson, from how this section came to be right — twice.** Everything above
+was originally written the other way round: that `pg`'s offset is discarded and the
+digits stored are Node's own wall-clock, so the two writers would disagree with each
+other whenever the machines' zones differed. It reads plausibly, it was believed long
+enough to be written into a plan and five documents, and it was wrong. What corrected it
+was not more careful reading — it was pinning the session zone three times and looking
+at the digits.
+
+That correction then overreached in its own way: having shown `@CreateDateColumn`
+writes track the session zone, it was tempting to conclude every TypeORM-managed
+timestamp does — including `locked_until`, the one column in this schema that is a
+genuine application-computed parameter rather than a `DEFAULT`/`CURRENT_TIMESTAMP`
+deferral. A single passing experiment on `categories.created_at` doesn't cover a
+different column with a different write path, and it took a fourth run — reverting
+`locked_until` itself under the same pinned harness — to find that it doesn't share the
+exposure. **A generalization is only as wide as what was actually tested; the fix for
+an unjustified generalization is to test the specific case, not to assume the opposite
+generalization instead.** When a note in this folder explains a mechanism at the
+driver/database boundary, prefer the version somebody has run an experiment against,
+name which one, and don't extend it past the column that experiment covered without
+running another. See `docs/phase-10-plan.md` §1 and §5 for how all three rounds were
+tested, and `docs/learning-notes/testing-strategy.md`'s note on ambient dependencies.
+
 ## Common Mistakes
 
 - Giving a nullable TypeScript field (`string | null`) a `@Column()` with no explicit

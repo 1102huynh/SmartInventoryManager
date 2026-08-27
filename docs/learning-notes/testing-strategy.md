@@ -32,17 +32,18 @@ Each layer catches a different class of mistake, and using only one leaves a gap
 
 ## How it works in this project
 
-- `npm test` runs everything matching `*.spec.ts` under `src/` — both the unit test
-  (`suppliers.service.spec.ts`, fast, mocked repository) and the integration test
-  (`inventory.service.integration.spec.ts`, slower, needs the local Postgres from
-  `tools/` running, targets the separate `smart_inventory_test` database).
+- `npm test` runs everything matching `*.spec.ts` under `src/` — the unit tests
+  (`suppliers.service.spec.ts`, fast, mocked repository) and the integration tests
+  (`inventory.service.integration.spec.ts` and, since Phase 10,
+  `timestamps.integration.spec.ts` — slower, need the local Postgres from `tools/`
+  running, target the separate `smart_inventory_test` database).
 - `npm run test:e2e` runs every `*.e2e-spec.ts` under `test/` — `app.e2e-spec.ts`,
-  and four more added since as each phase needed its own end-to-end coverage:
+  and five more added since as each phase needed its own end-to-end coverage:
   `auth.e2e-spec.ts` (Phase 3), `roles.e2e-spec.ts` and `categories.e2e-spec.ts`
-  (Phase 5), `users.e2e-spec.ts` (Phase 6) — all five against the separate
-  `smart_inventory_e2e` database, booting the actual `AppModule` with the same
-  `ValidationPipe`/`AllExceptionsFilter`/`ClassSerializerInterceptor` setup `main.ts`
-  uses.
+  (Phase 5), `users.e2e-spec.ts` (Phase 6), `audit.e2e-spec.ts` (Phase 9) — all six
+  against the separate `smart_inventory_e2e` database, booting the actual `AppModule`
+  with the same `ValidationPipe`/`AllExceptionsFilter`/`ClassSerializerInterceptor`
+  setup `main.ts` uses.
 
 Two *different* physical test databases (`smart_inventory_test` and
 `smart_inventory_e2e`), not one — Jest can run test files in parallel, and the
@@ -58,6 +59,53 @@ should have been unique to one test colliding with a leftover row from another
 file's last run). `test:e2e`'s npm script passes `--runInBand` specifically to force
 all e2e files onto one worker, in sequence, for exactly this reason. This wasn't
 needed back when there was only one e2e file to run.
+
+## A test with an unasserted ambient dependency can silently prove nothing (Phase 10)
+
+Some tests only discriminate between correct and incorrect behavior when the
+environment is in a particular state. **If a test needs an environmental condition in
+order to be able to fail, assert that condition and fail loudly when it is absent.**
+Otherwise the test still passes when the condition is missing — and a pass then means
+"nothing was checked," which is indistinguishable from "everything is fine" in a green
+suite. That is worse than having no test, because the missing test would at least be
+missing.
+
+`timestamps.integration.spec.ts` (Phase 10, `docs/phase-10-plan.md` §5) is this
+project's worked example. It proves that a `timestamptz` column round-trips to the
+right instant, and it can only fail if **Postgres's session zone and Node's zone have
+different offsets** — that difference is the entire mechanism it exercises. Point the
+suite at a host where the two coincide and every assertion passes without testing
+anything. So `beforeAll` reads Postgres's session offset, compares it against Node's,
+and throws if they match. Compare *offsets*, not zone names: `Asia/Bangkok` and
+`Asia/Ho_Chi_Minh` are different names for the same UTC+7.
+
+This is not hypothetical. The first version of that test had no guard, proved nothing,
+and was green — see below.
+
+### The Jest / `TZ` trap specifically
+
+`auth.e2e-spec.ts` sets `process.env.THROTTLE_LOGIN_LIMIT` and
+`process.env.AUTH_LOCKOUT_MINUTES` at the top of the file, above the imports, and that
+works: nothing reads those values until `ConfigService` looks them up at runtime, well
+after the assignment.
+
+**`TZ` does not behave that way, and copying the pattern to it fails silently.**
+Timezone-sensitive `Date` behavior can already have been initialized during Node/Jest
+bootstrap, before a test file's top-level statements run — on this project's setup, a
+`new Date().getTimezoneOffset()` check placed immediately after
+`process.env.TZ = 'America/Los_Angeles'` still reported the original zone. The first
+version of the Phase 10 test relied on that assignment to create the zone mismatch it
+needed, never got one, and passed anyway.
+
+Two rules follow, and they are the general form, not a note about `TZ`:
+
+- A working environment-variable pattern is only transferable to values read at
+  **runtime**. Anything consumed during process bootstrap needs a different mechanism —
+  for the Phase 10 test, pinning Postgres's session zone per connection
+  (`options: '-c timezone=<zone>'`, via `createTestDataSource()`'s optional `extra`),
+  which applies at connection-open time and has no caching to fight.
+- Never assume an environment assignment took effect. **Assert the resulting state** —
+  the offset, not the variable — and let the test fail loudly if it did not.
 
 ## Example
 
@@ -76,6 +124,9 @@ each one is proving something the other can't.
   This project uses three separate databases for exactly this reason: dev
   (`smart_inventory`), integration tests (`smart_inventory_test`), e2e tests
   (`smart_inventory_e2e`).
+- Assuming an environment variable set at the top of a spec file took effect. It does
+  for values read later at runtime (`ConfigService`); it does not for anything consumed
+  during process bootstrap, such as `TZ` — assert the resulting state instead.
 - Treating "the tests pass" as proof the *frontend* works — the e2e suite proves the
   API works over real HTTP; only actually driving the UI (as the frontend smoke test
   in this phase's transcript did, via a headless browser hitting the real running
@@ -89,3 +140,5 @@ each one is proving something the other can't.
 - E2E tests are the only layer that proves the HTTP pipeline (pipes, filters,
   controllers, services, database) is actually wired together correctly.
 - Isolate test databases from the dev database and from each other.
+- If a test can only fail when the environment is in a particular state, assert that
+  state — an unasserted ambient dependency turns a passing test into no test at all.

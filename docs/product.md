@@ -191,3 +191,8 @@ These affect the UI mockup and should be resolved before or during that phase.
   remain exactly as open as before — and in particular is **not** a resolution of
   Q-6 despite the surface resemblance: a log records what happened; an approval
   gates what may happen. Different features.
+- **[Added 2026-08-25, Phase 10]** The schema-wide `timestamptz` conversion
+  (`docs/phase-10-plan.md`, `domain-model.md` §8) — a data-model consistency change,
+  same shape as the Phase 7 entry above rather than Phase 9's: §4 gains no user goal
+  and §5 gains no use case. It resolves none of §10's open questions — Q-4, Q-6, and
+  Q-7 remain exactly as open as before.

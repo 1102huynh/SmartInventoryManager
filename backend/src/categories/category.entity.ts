@@ -26,9 +26,11 @@ export class Category {
   @OneToMany(() => Product, (product) => product.category)
   products: Product[];
 
-  @CreateDateColumn({ name: 'created_at' })
+  // Phase 10 (docs/phase-10-plan.md): timestamptz, not timestamp — every server-set
+  // timestamp column in the schema now stores an instant, not a clock reading.
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 
-  @UpdateDateColumn({ name: 'updated_at' })
+  @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
   updatedAt: Date;
 }

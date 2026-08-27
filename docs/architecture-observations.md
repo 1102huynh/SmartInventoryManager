@@ -105,17 +105,17 @@ immutable). This closed the last gap — `users` and `categories` had neither co
 before this phase; `products`, `suppliers`, and `inventory_transactions.created_at`
 had theirs since `InitSchema`.
 
-**A known, deliberately deferred question**: all of these audit columns are plain
-`TIMESTAMP` (no timezone), matching the four that existed before Phase 7 rather than
-introducing a second convention mid-schema. There's a real argument that server
-timestamps should be `timestamptz` throughout — the current plain `TIMESTAMP` columns
-are implicitly server-local/UTC by convention, not by an enforced type — but that's a
-schema-wide migration touching every existing audit column at once, not something to
-decide as a side effect of adding two tables' worth of columns. Parked here as a
-known latent question, not resolved.
+**A known, deliberately deferred question** (as of Phase 7): all of these audit
+columns were plain `TIMESTAMP` (no timezone), matching the four that existed before
+Phase 7 rather than introducing a second convention mid-schema. There's a real
+argument that server timestamps should be `timestamptz` throughout — the plain
+`TIMESTAMP` columns were implicitly server-local/UTC by convention, not by an
+enforced type — but that's a schema-wide migration touching every existing audit
+column at once, not something to decide as a side effect of adding two tables' worth
+of columns. Parked here as a known latent question, not resolved.
 
 **[Updated 2026-08-25, Phase 9]** Deferred a third time (Phase 8 §1 declined to
-reopen it; `docs/phase-9-plan.md` §1 defers it again), and each new table makes the
+reopen it; `docs/phase-9-plan.md` §1 defers it again), and each new table made the
 eventual migration one table wider. The exact list, so the next person deciding has
 one instead of an impression — every plain `TIMESTAMP` column in the schema as of
 Phase 9, ten pre-existing plus one new:
@@ -127,8 +127,95 @@ Phase 9, ten pre-existing plus one new:
   same plain-`TIMESTAMP` convention; see that migration's own comment)
 - `audit_events.created_at` **[new, Phase 9]**
 
-Eleven columns across six tables, up from ten across five before this phase. It has
-only grown, never shrunk, every phase since Phase 7 first parked the question.
+Eleven columns across six tables, up from ten across five before Phase 9. It only
+grew, never shrunk, every phase since Phase 7 first parked the question — until now.
+
+**[Resolved 2026-08-25, Phase 10]** All eleven columns above are `timestamptz` as of
+`docs/phase-10-plan.md`, converted in one migration
+(`1787740000000-ConvertTimestampsToTimestamptz.ts`). This is the first entry this
+file has ever *closed* rather than accumulated — worth noting because this file's
+stated purpose is to inform later decisions with evidence, and an entry that only
+ever grows is not evidence of anything.
+
+The actual argument, once it was measured rather than assumed: **a plain `TIMESTAMP`
+column stores digits with no zone marker, and the zone those digits are written in is
+not the zone they are read back in.**
+
+- **Write — but "TypeORM's write" turned out not to be one mechanism.** `DEFAULT now()`
+  produces digits in **Postgres's session zone**, obviously. So does
+  `@CreateDateColumn`/`@UpdateDateColumn` — not because TypeORM hands `pg` a computed
+  `Date` for them, but because it doesn't: when the entity carries no value for that
+  field (the only way any service in this codebase uses them), TypeORM emits the
+  literal SQL `DEFAULT` on insert and appends `CURRENT_TIMESTAMP` on update
+  (`docs/learning-notes/database-access.md`'s pre-existing note on exactly this, since
+  Phase 8) — the same Postgres-side expression as `DEFAULT now()`, evaluated in the same
+  session zone. The one column in this schema that *is* a genuine TypeORM-computed
+  parameter — `user.lockedUntil = new Date(...)` in
+  `UsersService.registerFailedLogin`, which has no database default to defer to — behaves
+  differently: `pg` serializes that `Date` with an offset the naive column then discards,
+  keeping **Node's own zone**, not Postgres's session zone. Confirmed for both cases by
+  pinning three different session zones and watching only the deferred columns track
+  them; `locked_until`'s digits tracked Node's real zone instead, unmoved by any of the
+  three.
+- **Read.** `pg`'s `postgres-date` gets bare digits with no offset attached and builds
+  a `Date` by treating them as local time in **the reading process's zone** — Node's,
+  for every naive column regardless of which write path produced it.
+
+So `created_at`/`updated_at` — every one of them, across all six tables — never
+disagree with `DEFAULT now()`, because they *are* `DEFAULT now()`/`CURRENT_TIMESTAMP`
+under the hood; the writer and the reader disagree instead. On this project both
+processes run on one developer's machine (`tools/README.md`), the two zones coincide,
+every column round-tripped correctly, and nothing ever surfaced the problem — **the
+precondition that made the old schema correct was never enforced, tested, or even named
+until this phase named it.** The ordinary way it stops being true is not exotic:
+Postgres in a container (UTC by default) with Node on the host, or the reverse. In that
+arrangement every one of these naive timestamps reads back shifted by the offset,
+uniformly — the same digits either way, with nothing to distinguish a shifted row from
+an honest one.
+
+`users.locked_until` does not share this exposure, and settling that took a third pass
+(see below): its value is a genuine application-computed parameter with no database
+default to defer to, so its write zone is Node's, same as its read zone. It is exposed
+to a narrower risk instead — Node's own zone changing between the write and a later
+read (a restart onto a differently-zoned host, a DST transition) — not to Postgres's
+session zone at all.
+
+**This is not the argument the phase was planned around, and the corrections are
+themselves the evidence this file exists to collect.** `docs/phase-10-plan.md` §1
+originally claimed the two writers disagreed with each other, each stamping its own
+process's wall-clock. Building the test meant to demonstrate that disproved it, and a
+second draft overcorrected into treating "TypeORM's write" as one mechanism uniformly
+cast through Postgres's session zone — which would have meant `locked_until` shared the
+audit columns' exposure too. Logging the actual generated SQL settled which columns
+defer to the database (`DEFAULT`/`CURRENT_TIMESTAMP`, session-zone-governed) and which
+send a real parameter (Node-zone-governed), and reverting `locked_until` specifically
+and re-running the suite confirmed it empirically rather than by re-reading the driver
+source a third time. The general lesson, in this file's usual currency: **an argument
+nobody has run an experiment against is a hypothesis, and a generalization drawn from
+one experiment is still a hypothesis about everything the experiment didn't cover.**
+`docs/phase-10-plan.md` §5 records all three rounds and how each was tested.
+
+The list above is kept, not deleted — it's the record of what got converted, the same
+role it played while the question was still open.
+
+**The migration pins the assumed source zone as an explicit literal**
+(`SOURCE_ZONE = 'Asia/Ho_Chi_Minh'` in the migration file) rather than reading it from
+`current_setting('TimeZone')`, which is what a bare `ALTER COLUMN ... TYPE timestamptz`
+with no `USING` clause does implicitly. The implicit form is correct by construction
+on the machine this migration was written for, but its failure mode is silent — it
+is the *same* failure mode (a value whose meaning depends on unrecorded ambient
+machine state) that this phase exists to remove. The literal's failure mode is loud:
+a reviewer reads a zone name in the migration and either agrees or does not. See
+`docs/phase-10-plan.md` §1 fork A for the full argument.
+
+**It is two literals, not one**, once the write-zone mechanism above is precise about
+which zone wrote which column: `SOURCE_ZONE` for the ten audit columns
+(Postgres's session zone), `SOURCE_ZONE_NODE` for `locked_until` (Node's). They're
+equal on this project for the same reason `SOURCE_ZONE` alone would otherwise have
+looked sufficient — one machine runs both processes — but the migration keeps them as
+separate constants specifically so that a deployment where the two processes' zones
+genuinely differ has somewhere correct to put the second fact, rather than a single
+name silently standing in for both.
 
 ## Cross-cutting: two rate-limiting mechanisms, two storage models (Phase 8)
 

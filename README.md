@@ -108,9 +108,32 @@ See `docs/learning-notes/testing-strategy.md` for what each of these actually pr
 
 ## Current phase
 
-Phase 9 — Audit log (`docs/phase-9-plan.md`): a single append-only `audit_events`
-table now records who did what, and when — both halves the project had deferred by
-name across four consecutive phases: every authentication attempt (login success,
+Phase 10 — Schema-wide `timestamptz` (`docs/phase-10-plan.md`): all eleven plain
+`TIMESTAMP` columns across six tables (`products`, `suppliers`, `users`, `categories`,
+`inventory_transactions.created_at`, `audit_events.created_at`, plus
+`users.locked_until`) are now `timestamptz`, converted in one migration. This closes a
+question parked by name in three consecutive phases (Phase 7 §7, Phase 8 §1, Phase 9
+§1): a plain `TIMESTAMP` stores a clock reading, not an instant, and it does not record
+which clock. Every writer here — Postgres's `DEFAULT now()` and TypeORM's
+`@CreateDateColumn`/`@UpdateDateColumn` alike — produces digits in Postgres's session
+zone, while every read reinterprets those digits in Node's zone. The writers agree with
+each other; the writer and the reader only ever agreed because both processes run on one
+machine today. **No route's response changes** — every timestamp
+string the API returns is byte-for-byte what it was before this phase; what changes is
+that it now survives Node and Postgres disagreeing about a zone, which it would not
+have before. See `docs/architecture-observations.md`'s resolved entry for the full
+argument.
+
+**After pulling this, run `npm run migration:run` against `smart_inventory` *and*
+against `smart_inventory_e2e`** (set `DB_DATABASE=smart_inventory_e2e` first). The e2e
+database is the one that's easy to forget, and forgetting it doesn't look like a
+broken migration — the e2e suite just runs against a stale schema and passes, so the
+phase looks green while having changed nothing the e2e tests touch.
+
+Earlier phases: Phase 9 — Audit log (`docs/phase-9-plan.md`) added a single
+append-only `audit_events` table that records who did what, and when — both halves
+the project had deferred by name across four consecutive phases: every authentication
+attempt (login success,
 login failure, account lockout) and every administrative write (account
 create/edit/status/password-reset, product/supplier/category create/edit/status/
 delete). The **actor** (who performed it) and **subject** (the account it's about)

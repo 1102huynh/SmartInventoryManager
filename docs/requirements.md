@@ -105,6 +105,19 @@ hardening of FR-060, not a new requirement. The rules themselves live in
 `business-rules.md` as BR-079–081, the same place BR-074–078 recorded Phase 6's
 authentication and account rules.
 
+## Schema-Wide `timestamptz` (Phase 10 — no new FR)
+
+Phase 10 (`docs/phase-10-plan.md`) converted all eleven plain `TIMESTAMP` columns
+across six tables to `timestamptz`, in one migration. Like Phase 7's audit timestamps
+and Phase 8's authentication hardening, this adds no new FR: "what type a server
+timestamp is stored as" is not a user goal in `product.md` §4, and no Owner opens a
+screen to do anything with it. Unlike either of those phases, it also changes no
+value any route returns — a timestamp captured from a response before the migration
+is byte-identical after it (`docs/phase-10-plan.md` §1 "What this phase buys is not a
+value — it is a guarantee"). Keeping this note beside Phase 7's and Phase 8's, rather
+than folding it into one of them, is what makes the contrast with Phase 9's FR-065
+legible as a record of judgement rather than a list.
+
 ## Cross-Reference Summary
 
 ```

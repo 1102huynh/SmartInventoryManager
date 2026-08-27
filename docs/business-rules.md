@@ -263,6 +263,28 @@ BR-078 gains a cross-reference: an Owner's reset is recorded as `user_password_r
 (BR-082), and the lock it clears is visible in the same log (`setPassword`'s summary
 notes the clear).
 
+**[2026-08-25, Phase 10]** No new BR. `docs/phase-10-plan.md`'s schema-wide
+`timestamptz` conversion is a column type, not a rule about the business — BR-051's
+immutability, BR-052's future-date check, BR-080's fifteen-minute lock, and BR-082's
+append-only record all say exactly what they said before. BR-080 gains a
+cross-reference only: converting `locked_until` closes a narrower gap than the audit
+columns' — not "the two processes disagree about a zone, continuously" (that never
+applied to this column; see below), but a fifteen-minute lock surviving a restart onto a
+differently-zoned host, or a DST transition between the lock and the check, without
+drifting.
+
+How exposed the lock actually was under plain `timestamp` took three attempts to state
+correctly, settled by experiment rather than by re-reading the driver source a third
+time (`docs/phase-10-plan.md` §1's `locked_until` bullet and §5 have the full history).
+`locked_until` is an application-computed value with no database default to defer to —
+unlike `created_at`/`updated_at`, which TypeORM fills in via the database's own
+`DEFAULT`/`CURRENT_TIMESTAMP` and which therefore share `DEFAULT now()`'s exposure to
+Postgres's session zone. Reverting `locked_until` alone to `type: 'timestamp'` under a
+harness that reliably breaks the audit columns left it round-tripping correctly: its
+write and its read both happen in Node's zone, so the everyday mismatch this phase
+otherwise closes never applied to it. Its actual, narrower exposure is the one this
+paragraph opens with.
+
 ## Rules Explicitly Deferred (Future scope, not defined now)
 
 - Pricing/cost rules (cost of goods, valuation) — depends on product.md Q-1.

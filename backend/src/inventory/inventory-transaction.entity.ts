@@ -49,6 +49,11 @@ export class InventoryTransaction {
   @Column({ name: 'quantity_delta', type: 'int' })
   quantityDelta: number;
 
+  // No longer the schema's one timestamptz exception (Phase 10,
+  // docs/phase-10-plan.md) — it's the earliest example of the convention instead.
+  // created_at below is timestamptz now too, so the business-fact/audit-fact
+  // distinction between the two (domain-model.md §8) is carried entirely by the
+  // column names and that section's prose, not by the types.
   @Column({ name: 'occurred_at', type: 'timestamptz' })
   occurredAt: Date;
 
@@ -73,6 +78,7 @@ export class InventoryTransaction {
   @Column({ type: 'text', nullable: true })
   reason: string | null;
 
-  @CreateDateColumn({ name: 'created_at' })
+  // Phase 10 (docs/phase-10-plan.md): timestamptz, not timestamp.
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 }

@@ -126,7 +126,15 @@ Current stock for a Product is derived by aggregating all of its Inventory Trans
 Every table records `created_at` — set once, server-side, on insert, never
 user-supplied. A table whose rows can change after creation additionally records
 `updated_at` — bumped on every save of that row; a table whose rows are immutable
-does not, because there is nothing for it to ever record.
+does not, because there is nothing for it to ever record. **[Updated 2026-08-25,
+Phase 10]** Every server-set timestamp column is `timestamptz` — the convention now
+names a type, not just a naming rule. See `docs/phase-10-plan.md` §1 and
+`architecture-observations.md`'s resolved entry for why: a `timestamp without time
+zone` stores a clock reading, not an instant, and it records no zone alongside the
+digits. Every writer here — Postgres's `DEFAULT now()` and TypeORM's
+`@CreateDateColumn`/`@UpdateDateColumn` alike — writes those digits in Postgres's
+session zone; every read reinterprets them in Node's. The two only ever agreed because
+both processes run on one machine today, and nothing checked that they did.
 
 - **`products`, `suppliers`, `users`, `categories`** — mutable rows, so all four carry
   both columns (`users`/`categories` since Phase 7, `docs/phase-7-plan.md`; the other
@@ -148,9 +156,16 @@ the one entity that has both:
 - `occurred_at` (`timestamptz`, user-supplied, cannot be in the future per BR-052) is
   a **business fact**: when the stock movement happened in the world. It can be
   backdated to record yesterday's delivery.
-- `created_at` (`TIMESTAMP DEFAULT now()`, server-set) is an **audit fact**: when the
-  row was written to the database. It can never be backdated and carries no business
-  meaning.
+- `created_at` (`timestamptz DEFAULT now()`, server-set) is an **audit fact**: when
+  the row was written to the database. It can never be backdated and carries no
+  business meaning.
+
+**[Added 2026-08-25, Phase 10]** Before this phase the two columns were also
+distinguishable by type — `occurred_at` was `timestamptz`, `created_at` was a plain
+`timestamp` — which made the business-fact/audit-fact distinction legible from the
+schema alone. Both are `timestamptz` now, so that distinction is carried entirely by
+the column names and by this subsection's prose; the type was never *encoding* the
+distinction; it was encoding "someone thought harder about this one column."
 
 `Product`, `Supplier`, `User`, and `Category` have no business-event time of their
 own — there's no "when did this account come into existence in the world" distinct

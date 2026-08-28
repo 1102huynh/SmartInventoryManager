@@ -118,6 +118,26 @@ value — it is a guarantee"). Keeping this note beside Phase 7's and Phase 8's,
 than folding it into one of them, is what makes the contrast with Phase 9's FR-065
 legible as a record of judgement rather than a list.
 
+## Bounded Reads (Phase 11 — no new FR)
+
+Phase 11 (`docs/phase-11-plan.md`) capped the two transaction log reads
+(`GET /inventory-transactions`, `GET /products/:id/transactions`) at a `limit` (default
+100), matching the cap `/audit-events` has had since Phase 9. Like Phases 7, 8, and 10,
+this adds no new FR: "how many rows one request returns" is not a user goal in
+`product.md` §4, and no Owner opens a screen to do anything with it.
+
+**FR-030 and FR-031 use the word "all" — "the chronological list of *all* … transactions
+for a given product" (FR-030), "view *all* inventory transactions" (FR-031) — and the
+honest reading is that "all" names the screen's *subject*, not a transport-level
+guarantee about one HTTP response.** A history screen that shows the recent movements
+and lets a user narrow the range with filters still lets them "view the chronological
+list of all transactions"; a request that carries 100 of them does not stop that being
+true. The requirement is satisfied by a screen that shows the history — it was never a
+promise that a single response would carry every row of it. Recorded here as an
+interpretation with its reasoning, in the same spirit as Phase 9's FR-065 note
+recording why *that* phase did add an FR: this is the one place a reader could
+reasonably think Phase 11 broke a Must, and it did not.
+
 ## Cross-Reference Summary
 
 ```

@@ -263,6 +263,16 @@ describe('Audit log (e2e)', () => {
     );
     expect(capped.status).toBe(200);
     expect(capped.body).toHaveLength(2);
+    // Phase 11 (docs/phase-11-plan.md §1): this route has been silently truncating
+    // since Phase 9 and stops — the third of the three categories is beyond limit=2.
+    expect(capped.headers['x-result-truncated']).toBe('true');
+
+    // Enough headroom that nothing is cut: the header is ABSENT, not "false".
+    const roomy = await asOwner(
+      request(app.getHttpServer()).get('/audit-events?limit=50'),
+    );
+    expect(roomy.status).toBe(200);
+    expect(roomy.headers['x-result-truncated']).toBeUndefined();
 
     const tooLarge = await asOwner(
       request(app.getHttpServer()).get('/audit-events?limit=100000'),

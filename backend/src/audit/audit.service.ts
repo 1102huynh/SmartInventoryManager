@@ -1,8 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { daysCutoffForInstantColumn } from '../common/days-cutoff';
 import { AuditEntityType } from '../common/enums/audit-entity-type.enum';
 import { AuditEventType } from '../common/enums/audit-event-type.enum';
+import { BoundedResult, trimToLimit } from '../common/result-truncated.header';
 import { AuditEvent } from './audit-event.entity';
 import { QueryAuditEventsDto } from './dto/query-audit-events.dto';
 
@@ -64,13 +66,25 @@ export class AuditService {
   // InventoryService.listAll already made for product/supplier/recordedBy — safe by
   // construction because ClassSerializerInterceptor already strips passwordHash,
   // failedLoginAttempts, and lockedUntil from any nested User (see user.entity.ts).
-  findAll(query: QueryAuditEventsDto): Promise<AuditEvent[]> {
+  //
+  // Phase 11 (docs/phase-11-plan.md §1 "Truncation has to be observable"): this route
+  // has been silently truncating since Phase 9. It now returns { rows, truncated } the
+  // same way InventoryService's two log reads do, and AuditController sets the same
+  // X-Result-Truncated header — leaving the older capped route as the only silent one
+  // would make the convention this phase writes down false on the day it is written.
+  // The probe is `limit + 1`: ask for one more than we return, and if it comes back,
+  // more rows matched. `event.id DESC` was already a total order, so unlike the
+  // transaction reads this route needed no tie-break added.
+  async findAll(
+    query: QueryAuditEventsDto,
+  ): Promise<BoundedResult<AuditEvent>> {
+    const limit = query.limit ?? DEFAULT_LIMIT;
     const qb = this.auditRepository
       .createQueryBuilder('event')
       .leftJoinAndSelect('event.actor', 'actor')
       .leftJoinAndSelect('event.subject', 'subject')
       .orderBy('event.id', 'DESC')
-      .take(query.limit ?? DEFAULT_LIMIT);
+      .take(limit + 1);
 
     if (query.eventType)
       qb.andWhere('event.eventType = :eventType', {
@@ -85,10 +99,16 @@ export class AuditService {
         subjectUserId: query.subjectUserId,
       });
     if (query.days) {
-      const cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - query.days);
-      qb.andWhere('event.createdAt >= :cutoff', { cutoff });
+      // Phase 11 review: the same contract as InventoryService.listAll — `days=N` is N
+      // calendar dates ending with today — so "Last 7 days" means one thing across the
+      // API. The *function* differs because the column does: `created_at` is a real
+      // instant, so its boundary is local midnight, where `occurred_at` is a date-only
+      // value that has to be anchored the way it was written. See common/days-cutoff.ts
+      // for the sweep showing why one formula cannot serve both.
+      qb.andWhere('event.createdAt >= :cutoff', {
+        cutoff: daysCutoffForInstantColumn(query.days),
+      });
     }
-    return qb.getMany();
+    return trimToLimit(await qb.getMany(), limit);
   }
 }

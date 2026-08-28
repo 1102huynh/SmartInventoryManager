@@ -21,7 +21,21 @@ import { User } from '../users/user.entity';
 // The two @Check constraints below encode BR-050 directly in the schema, as a second
 // line of defense behind the service-layer validation: even a bug or a future direct
 // SQL script can't produce a row that violates these rules.
+//
+// Phase 11 (docs/phase-11-plan.md §1 "The index Phase 9 added and Phase 2 never did"):
+// the class-level @Index below is the composite both bounded log reads order by
+// (occurred_at DESC, id DESC — the id tie-break is load-bearing, because occurred_at
+// comes from <input type="date"> and every row on one business day is byte-identical
+// in it). It exists here as well as in
+// 1787830000000-AddInventoryTransactionsOccurredAtIndex so smart_inventory_test
+// (synchronize: true) builds it too — the same three-registries split Phases 9 and 10
+// each had. The two are deliberately NOT byte-identical: TypeORM's class-level
+// @Index([...]) takes column names only and cannot express per-column DESC, so the
+// test database gets (occurred_at ASC, id ASC) where the migration creates DESC/DESC.
+// Postgres scans a b-tree backwards at the same cost, so both satisfy the ORDER BY as
+// an index scan and no query behaves differently — the difference is expected, not a bug.
 @Entity('inventory_transactions')
+@Index(['occurredAt', 'id'])
 @Check(`"quantity_delta" <> 0`)
 @Check(`type = 'stock_in' OR supplier_id IS NULL`) // supplier only makes sense on stock-in
 @Check(`type <> 'adjustment' OR (reason IS NOT NULL AND reason <> '')`) // BR-032

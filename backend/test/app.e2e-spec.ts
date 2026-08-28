@@ -23,7 +23,9 @@ import * as bcrypt from 'bcrypt';
 import { DataSource } from 'typeorm';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { CORS_OPTIONS } from '../src/common/cors-options';
 import { AllExceptionsFilter } from '../src/common/filters/all-exceptions.filter';
+import { RESULT_TRUNCATED_HEADER } from '../src/common/result-truncated.header';
 
 // An E2E (end-to-end) test is the outermost, slowest, most realistic kind: it starts
 // the actual Nest application — real HTTP layer, real ValidationPipe, real exception
@@ -51,7 +53,11 @@ describe('Smart Inventory Manager API (e2e)', () => {
     }).compile();
     app = moduleRef.createNestApplication();
     // Mirrors main.ts exactly — an e2e test that skips this would validate against a
-    // different (looser) pipeline than production actually runs.
+    // different (looser) pipeline than production actually runs. CORS was the one
+    // piece of main.ts this file did NOT mirror, which is precisely why Phase 11's
+    // missing `exposedHeaders` was invisible to a green suite; it is mirrored now,
+    // from the same shared object main.ts uses (common/cors-options.ts).
+    app.enableCors(CORS_OPTIONS);
     app.useGlobalPipes(
       new ValidationPipe({
         whitelist: true,
@@ -238,5 +244,118 @@ describe('Smart Inventory Manager API (e2e)', () => {
       .post('/products')
       .send({ name: 'Widget', sku: 'W-1', unit: 'each' });
     expect(res.status).toBe(401);
+  });
+
+  // Phase 11 (docs/phase-11-plan.md §5): the two transaction log reads are bounded now.
+  // These exercise the validation shape and the X-Result-Truncated contract end to
+  // end; the service integration spec covers the 100/150-row cap arithmetic.
+  describe('bounded transaction reads (Phase 11)', () => {
+    async function seedProductWithTransactions(n: number): Promise<number> {
+      const product = await auth(
+        request(app.getHttpServer()).post('/products'),
+      ).send({ name: 'Widget', sku: 'W-1', unit: 'each' });
+      const id = product.body.id;
+      for (let i = 0; i < n; i++) {
+        await auth(
+          request(app.getHttpServer()).post(`/products/${id}/stock-in`),
+        )
+          .send({ quantity: 1, occurredAt: '2026-08-15' })
+          .expect(201);
+      }
+      return id;
+    }
+
+    it('rejects an out-of-range or non-numeric limit with 400', async () => {
+      for (const limit of ['0', '501', 'abc']) {
+        const res = await auth(
+          request(app.getHttpServer()).get(
+            `/inventory-transactions?limit=${limit}`,
+          ),
+        );
+        expect(res.status).toBe(400);
+      }
+    });
+
+    it('rejects days=0 with 400 instead of silently returning an empty list', async () => {
+      const res = await auth(
+        request(app.getHttpServer()).get('/inventory-transactions?days=0'),
+      );
+      expect(res.status).toBe(400);
+    });
+
+    it('sets X-Result-Truncated only when more rows matched than were returned', async () => {
+      await seedProductWithTransactions(3);
+
+      const capped = await auth(
+        request(app.getHttpServer()).get('/inventory-transactions?limit=2'),
+      );
+      expect(capped.status).toBe(200);
+      expect(capped.body).toHaveLength(2);
+      expect(capped.headers['x-result-truncated']).toBe('true');
+
+      // limit == matched: the full set, and the header is ABSENT, not "false".
+      const exact = await auth(
+        request(app.getHttpServer()).get('/inventory-transactions?limit=3'),
+      );
+      expect(exact.status).toBe(200);
+      expect(exact.body).toHaveLength(3);
+      expect(exact.headers['x-result-truncated']).toBeUndefined();
+    });
+
+    // What this proves, and what it deliberately does not.
+    //
+    // It does NOT verify browser CORS enforcement — supertest talks to the HTTP server
+    // in this same process, where there is no browser, no origin policy, and therefore
+    // nothing to enforce. The header above (`x-result-truncated`) is readable here
+    // whether or not `exposedHeaders` is configured, which is exactly why the omission
+    // survived a green suite.
+    //
+    // What it DOES prove is the one half a server-side test owns: that the options
+    // main.ts passes to enableCors cause a real response to carry
+    // Access-Control-Expose-Headers naming X-Result-Truncated. Given that header, a
+    // browser exposing the value to page JavaScript is the fetch spec's half. Remove
+    // `exposedHeaders` from CORS_OPTIONS and this test goes red; the assertion above
+    // does not.
+    it('exposes X-Result-Truncated and Retry-After to cross-origin callers (Access-Control-Expose-Headers)', async () => {
+      await seedProductWithTransactions(3);
+
+      const res = await auth(
+        request(app.getHttpServer())
+          .get('/inventory-transactions?limit=2')
+          .set('Origin', 'http://localhost:5173'),
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.headers['x-result-truncated']).toBe('true');
+      expect(res.headers['access-control-expose-headers']).toBeDefined();
+      const exposed = res.headers['access-control-expose-headers']
+        .split(',')
+        .map((h: string) => h.trim().toLowerCase());
+      expect(exposed).toContain(RESULT_TRUNCATED_HEADER.toLowerCase());
+      // Retry-After is sent on every 429 (Phase 8) but is not CORS-safelisted, so a
+      // browser can only read it when it is named here. Same failure mode as
+      // X-Result-Truncated above: invisible to a green in-process suite otherwise.
+      expect(exposed).toContain('retry-after');
+    });
+
+    it('GET /products/:id/transactions carries the same header and rejects a bad limit', async () => {
+      const id = await seedProductWithTransactions(2);
+
+      const capped = await auth(
+        request(app.getHttpServer()).get(
+          `/products/${id}/transactions?limit=1`,
+        ),
+      );
+      expect(capped.status).toBe(200);
+      expect(capped.body).toHaveLength(1);
+      expect(capped.headers['x-result-truncated']).toBe('true');
+
+      const bad = await auth(
+        request(app.getHttpServer()).get(
+          `/products/${id}/transactions?limit=999`,
+        ),
+      );
+      expect(bad.status).toBe(400);
+    });
   });
 });

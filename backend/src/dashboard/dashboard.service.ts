@@ -33,18 +33,28 @@ export class DashboardService {
       (p) => (stockMap.get(p.id) ?? 0) <= 0,
     );
 
-    const recentTransactions = await this.inventoryService.listAll({});
-    const last7DaysTransactions = await this.inventoryService.listAll({
-      days: 7,
-    });
+    // Phase 11 (docs/phase-11-plan.md §2 "the actual win"): opening the dashboard used
+    // to be O(whole transaction history), twice — listAll({}) materialised the entire
+    // joined table to keep 8 rows, and listAll({ days: 7 }) materialised the 7-day
+    // window to read nothing but .length. Now: 9 rows fetched, and one COUNT(*).
+    //
+    // recentActivity is equivalent to the old result on tie-free data. Where rows
+    // share an occurred_at at the 8-row boundary the two can differ: the old
+    // slice(0, 8) took whatever order the executor happened to produce for
+    // `ORDER BY occurred_at DESC` (execution-plan-dependent, not guaranteed), while
+    // `ORDER BY occurred_at DESC, id DESC LIMIT 8` is deterministic — newest-inserted
+    // first among a tie. So this is a determinism *improvement*, not merely preserved
+    // behaviour (§1, §2).
+    const recent = await this.inventoryService.listAll({ limit: 8 });
+    const transactionsLast7Days = await this.inventoryService.countSince(7);
 
     return {
       activeProductsCount: activeProducts.length,
       inactiveProductsCount: products.length - activeProducts.length,
       lowStockCount: lowStockProducts.length,
       outOfStockCount: outOfStockProducts.length,
-      transactionsLast7Days: last7DaysTransactions.length,
-      recentActivity: recentTransactions.slice(0, 8),
+      transactionsLast7Days,
+      recentActivity: recent.rows,
       // BR-062: needsAttention is deliberately the low-stock list only, not low-stock
       // + out-of-stock merged. A product with no threshold configured is out of stock
       // "silently" here (still counted in outOfStockCount above) — that's BR-061

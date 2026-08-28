@@ -381,7 +381,12 @@ const Store = {
   // ValidationPipe/exception filter sent back — the same message a
   // `try { await Store.x() } catch (err) { err.message }` pattern in the wizards
   // already expected from Phase 1's synchronous version.
-  async _request(method, path, body){
+  // `opts.withTruncation` (Phase 11, docs/phase-11-plan.md §3): the two bounded
+  // transaction-list reads need one response header — `X-Result-Truncated` — that the
+  // parsed JSON body no longer carries. Rather than a general response-metadata layer,
+  // this one flag: with it set, `_request` resolves to `{ data, truncated }` instead
+  // of bare `data`. Every other caller is untouched.
+  async _request(method, path, body, opts){
     const options = { method, headers: {} };
     if (body !== undefined){
       options.headers['Content-Type'] = 'application/json';
@@ -389,7 +394,10 @@ const Store = {
     }
     if (ACCESS_TOKEN) options.headers['Authorization'] = `Bearer ${ACCESS_TOKEN}`;
     const res = await fetch(API_BASE + path, options);
-    if (res.status === 204) return null;
+    const wrap = (data) => (opts && opts.withTruncation)
+      ? { data, truncated: res.headers.get('X-Result-Truncated') === 'true' }
+      : data;
+    if (res.status === 204) return wrap(null);
     let data = null;
     try { data = await res.json(); } catch (e) { /* empty body */ }
     // A 401 here means the token we were holding (if any) is no longer good enough —
@@ -438,7 +446,7 @@ const Store = {
       const message = data && (Array.isArray(data.message) ? data.message.join(' ') : data.message);
       throw new Error(message || `Request failed (${res.status}).`);
     }
-    return data;
+    return wrap(data);
   },
 
   // FR-060. Every write endpoint requires a token now (JwtAuthGuard, registered
@@ -608,13 +616,24 @@ const Store = {
     return this._request('GET', '/auth/me').then(me => { CURRENT_USER = me; }).catch(() => {});
   },
 
+  // Phase 11 (docs/phase-11-plan.md §3): every bounded list read returns
+  // `{ items, truncated }` — `truncated` drives the "showing the most recent N" line
+  // on the screen that renders it.
+  //
+  // `listTransactionsForSupplier` is included, and its first version was not. It reads
+  // the SAME capped route as listAllTransactions (`/inventory-transactions`, filtered
+  // by supplierId — api.md names that panel as a consumer of it), so it was already
+  // being truncated at 100 with nothing said; before this phase that panel showed
+  // every stock-in from a supplier. A screen that quietly stops mid-record is the
+  // defect the phase exists to remove, and "only two screens ask for the header" was a
+  // property of the first implementation, not a decision about this one.
   async listTransactionsForProduct(id){
-    const rows = await this._request('GET', `/products/${id}/transactions`);
-    return rows.map(normalizeTx);
+    const { data, truncated } = await this._request('GET', `/products/${id}/transactions`, undefined, { withTruncation: true });
+    return { items: data.map(normalizeTx), truncated };
   },
   async listTransactionsForSupplier(id){
-    const rows = await this._request('GET', `/inventory-transactions?supplierId=${id}`);
-    return rows.map(normalizeTx);
+    const { data, truncated } = await this._request('GET', `/inventory-transactions?supplierId=${id}`, undefined, { withTruncation: true });
+    return { items: data.map(normalizeTx), truncated };
   },
   async listAllTransactions({ type, productId, days } = {}){
     const q = new URLSearchParams();
@@ -622,18 +641,21 @@ const Store = {
     if (productId) q.set('productId', productId);
     if (days) q.set('days', days);
     const qs = q.toString();
-    const rows = await this._request('GET', '/inventory-transactions' + (qs ? '?' + qs : ''));
-    return rows.map(normalizeTx);
-  },
-  async recentActivity(limit){
-    const rows = await this._request('GET', '/inventory-transactions');
-    return rows.slice(0, limit).map(normalizeTx);
+    const { data, truncated } = await this._request('GET', '/inventory-transactions' + (qs ? '?' + qs : ''), undefined, { withTruncation: true });
+    return { items: data.map(normalizeTx), truncated };
   },
 
   // Phase 9 (docs/phase-9-plan.md §3): built exactly like listAllTransactions — query
   // string assembly, one GET, one normalize pass. Owner-only server-side
   // (AuditController's class-level @Roles) — this method has no opinion about that,
   // the same way Store.getUsers doesn't gate itself either.
+  //
+  // Phase 11: returns `{ items, truncated }` like the transaction reads. This route has
+  // been capped at 100 since Phase 9 and said nothing about it; the header exists now,
+  // and the Audit Log screen reads it. The consequence of staying silent is sharper
+  // here than anywhere else in the app: an Owner scrolling to the bottom of this
+  // screen to answer "has anything else happened to this account" would read the end
+  // of one page as the end of the record.
   async listAuditEvents({ eventType, actorUserId, subjectUserId, days, limit } = {}){
     const q = new URLSearchParams();
     if (eventType) q.set('eventType', eventType);
@@ -642,8 +664,8 @@ const Store = {
     if (days) q.set('days', days);
     if (limit) q.set('limit', limit);
     const qs = q.toString();
-    const rows = await this._request('GET', '/audit-events' + (qs ? '?' + qs : ''));
-    return rows.map(normalizeAuditEvent);
+    const { data, truncated } = await this._request('GET', '/audit-events' + (qs ? '?' + qs : ''), undefined, { withTruncation: true });
+    return { items: data.map(normalizeAuditEvent), truncated };
   },
 
   getDashboardSummary(){ return this._request('GET', '/dashboard/summary'); },
@@ -819,6 +841,20 @@ const UI = {
   },
   errorState(message, retryId){
     return `<div class="error-state">${UI.icon('error')}<h3>Something went wrong</h3><p>${UI.esc(message)}</p><button class="btn btn-secondary btn-sm" id="${retryId}">Retry</button></div>`;
+  },
+  // Phase 11 (docs/phase-11-plan.md §1 "Truncation has to be observable"): the one
+  // notice every bounded list renders when the server's X-Result-Truncated header came
+  // back. Four screens show it now — Inventory History, Product Detail's history
+  // panel, Supplier Detail's "received from" panel, and the Audit Log — and the point
+  // of one helper is that a fifth bounded list cannot accidentally word it differently
+  // or, worse, forget it. `noun` and `hint` vary per screen: Inventory History and the
+  // Audit Log name the filters that actually let you reach older rows; Product Detail
+  // and Supplier Detail have no such controls, so their hint only states the fact
+  // ("more history than one page shows") rather than pointing at an action that isn't
+  // there. Widening those two is the paging decision deferred in
+  // docs/phase-11-plan.md §7.
+  truncationNotice(count, noun, hint){
+    return `<div class="inline-notice info" style="margin-bottom:14px">${UI.icon('history')}<div>Showing the most recent ${count} ${UI.esc(noun)}. ${UI.esc(hint)}</div></div>`;
   },
 };
 
@@ -1300,6 +1336,7 @@ Views.productList = function(container, query){
 Views.productDetail = function(container, id){
   let product = null;
   let history = [];
+  let historyTruncated = false;
   let confirmMode = null; // null | 'deactivate' | 'delete'
 
   // Phase 1 read `product` and its history synchronously off local arrays and never
@@ -1311,7 +1348,7 @@ Views.productDetail = function(container, id){
   function load(){
     container.innerHTML = `<div class="skeleton skeleton-line" style="width:220px;height:24px"></div>`;
     Promise.all([Store.getProduct(id), Store.listTransactionsForProduct(id)])
-      .then(([p, h]) => { product = p; history = h; render(); })
+      .then(([p, h]) => { product = p; history = h.items; historyTruncated = h.truncated; render(); })
       .catch(err => { container.innerHTML = UI.errorState(err.message, 'retry'); container.querySelector('#retry')?.addEventListener('click', load); });
   }
 
@@ -1346,6 +1383,7 @@ Views.productDetail = function(container, id){
       </div>
 
       <h2 class="section-title">Transaction History</h2>
+      ${historyTruncated ? UI.truncationNotice(history.length, 'movements', 'This product has more history than one page shows.') : ''}
       ${history.length > 0 ? `<div class="table-wrap"><table class="data-table">
         <thead><tr><th>Date</th><th>Type</th><th>Qty</th><th>Supplier / Reason</th><th>By</th></tr></thead>
         <tbody>${history.map(historyRow).join('')}</tbody>
@@ -1828,15 +1866,15 @@ Views.historyView = function(container, query){
     container.innerHTML = header() + toolbar() + `<div class="table-wrap"><table class="data-table"><tbody>${UI.skeletonRows(6,7)}</tbody></table></div>`;
     attachHeaderHandlers();
     UI.mockFetch(async () => {
-      if (override === 'empty') return [];
-      const [products, list] = await Promise.all([
+      if (override === 'empty') return { items: [], truncated: false };
+      const [products, result] = await Promise.all([
         productOptions.length ? productOptions : Store.listProducts({}),
         Store.listAllTransactions({ type: type || undefined, productId: productId || undefined, days: days ? Number(days) : undefined }),
       ]);
       productOptions = products;
-      return list;
+      return result;
     }, { forceState: override === 'error' ? 'error' : null })
-      .then(list => { container.innerHTML = header() + toolbar() + body(list); attachAll(); })
+      .then(result => { container.innerHTML = header() + toolbar() + body(result.items, result.truncated); attachAll(); })
       .catch(err => { container.innerHTML = header() + toolbar() + UI.errorState(err.message, 'retry'); attachAll(); });
   }
 
@@ -1866,11 +1904,16 @@ Views.historyView = function(container, query){
     </div>`;
   }
 
-  function body(list){
+  function body(list, truncated){
     if (list.length === 0){
       return UI.emptyState(override === 'empty' ? 'No transactions recorded' : 'No matching transactions', override === 'empty' ? 'Stock movements will appear here once recorded.' : 'Try a different filter combination.');
     }
-    return `<div class="table-wrap"><table class="data-table">
+    // Phase 11 (docs/phase-11-plan.md §3): without this line, a shop open two years
+    // sees a history that silently stops in the middle of last month.
+    const notice = truncated
+      ? UI.truncationNotice(list.length, 'movements', 'Narrow the range or filter by product to see more.')
+      : '';
+    return `${notice}<div class="table-wrap"><table class="data-table">
       <thead><tr><th>Date</th><th>Product</th><th>Type</th><th>Qty</th><th>Supplier / Reason</th><th>By</th></tr></thead>
       <tbody>${list.map(rowHtml).join('')}</tbody>
     </table></div>`;
@@ -1966,12 +2009,13 @@ Views.supplierList = function(container, query){
 Views.supplierDetail = function(container, id){
   let supplier = null;
   let txs = [];
+  let txsTruncated = false;
   let confirmMode = null;
 
   function load(){
     container.innerHTML = `<div class="skeleton skeleton-line" style="width:220px;height:24px"></div>`;
     Promise.all([Store.getSupplierById(id), Store.listTransactionsForSupplier(id)])
-      .then(([s, t]) => { supplier = s; txs = t; render(); })
+      .then(([s, t]) => { supplier = s; txs = t.items; txsTruncated = t.truncated; render(); })
       .catch(err => { container.innerHTML = UI.errorState(err.message, 'retry'); container.querySelector('#retry')?.addEventListener('click', load); });
   }
 
@@ -1997,6 +2041,7 @@ Views.supplierDetail = function(container, id){
           : `<button class="btn btn-secondary" id="btn-toggle">${supplier.status==='active' ? 'Deactivate' : 'Reactivate'}</button>`}
       </div>
       <h2 class="section-title">Stock Received From This Supplier</h2>
+      ${txsTruncated ? UI.truncationNotice(txs.length, 'movements', 'This supplier has more history than one page shows.') : ''}
       ${txs.length === 0 ? UI.emptyState('No stock-in recorded', 'Transactions that reference this supplier will show up here.') : `
       <div class="table-wrap"><table class="data-table">
         <thead><tr><th>Date</th><th>Product</th><th>Qty</th><th>Recorded By</th></tr></thead>
@@ -2365,14 +2410,14 @@ Views.auditLog = function(container, query){
     container.innerHTML = header() + toolbar() + `<div class="table-wrap"><table class="data-table"><tbody>${UI.skeletonRows(6,6)}</tbody></table></div>`;
     attachHeaderHandlers();
     UI.mockFetch(async () => {
-      if (override === 'empty') return [];
+      if (override === 'empty') return { items: [], truncated: false };
       return Store.listAuditEvents({
         eventType: eventType || undefined,
         subjectUserId: subjectUserId || undefined,
         days: days ? Number(days) : undefined,
       });
     }, { forceState: override === 'error' ? 'error' : null })
-      .then(list => { container.innerHTML = header() + toolbar() + body(list); attachAll(); })
+      .then(result => { container.innerHTML = header() + toolbar() + body(result.items, result.truncated); attachAll(); })
       .catch(err => { container.innerHTML = header() + toolbar() + UI.errorState(err.message, 'retry'); attachAll(); });
   }
 
@@ -2397,14 +2442,21 @@ Views.auditLog = function(container, query){
     </div>`;
   }
 
-  function body(list){
+  function body(list, truncated){
     if (list.length === 0){
       return UI.emptyState(
         override === 'empty' ? 'No audit events recorded' : 'No matching events',
         override === 'empty' ? 'Events will appear here once someone logs in or an Owner makes a change.' : 'Try a different filter combination.',
       );
     }
-    return `<div class="table-wrap"><table class="data-table">
+    // Phase 11: "narrow the range" here means the filters this toolbar already has —
+    // event type, account, and the 7/30/90-day selector — which is exactly the
+    // interaction model Phase 9 chose when it capped this route and declined offset
+    // pagination (docs/phase-9-plan.md §1).
+    const notice = truncated
+      ? UI.truncationNotice(list.length, 'events', 'Filter by event type, account, or time range to see more.')
+      : '';
+    return notice + `<div class="table-wrap"><table class="data-table">
       <thead><tr><th>When</th><th>Event</th><th>Actor</th><th>Subject / Target</th><th>Details</th><th>Address</th></tr></thead>
       <tbody>${list.map(rowHtml).join('')}</tbody>
     </table></div>`;

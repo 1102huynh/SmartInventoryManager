@@ -260,3 +260,48 @@ evidence in both cases: a real, not hypothetical, sign the precondition has move
 (e.g. audit writes actually failing in production) before treating either as
 something needing an alarm, a retry queue, or a durability guarantee it does not
 today have.
+
+## Cross-cutting: unbounded reads, and Phase 9's narrower-than-necessary reason (Phase 11)
+
+Phase 11 (`docs/phase-11-plan.md`) capped the two transaction log reads. The census it
+was scoped from, taken from the repository rather than from memory:
+
+| Route | Service method | Bound before Phase 11 | Ordered by | What makes it grow |
+|---|---|---|---|---|
+| `GET /audit-events` | `AuditService.findAll` | `limit`, default 100, `@Max(500)` (Phase 9) | `event.id DESC` | every login attempt, anonymous included |
+| `GET /inventory-transactions` | `InventoryService.listAll` | **none** | `tx.occurredAt DESC` | **every stock movement, forever** |
+| `GET /products/:id/transactions` | `InventoryService.listForProduct` | **none** | `occurredAt DESC` | **every stock movement on that product, forever** |
+| `GET /products` | `ProductsService.findAll` | none | `product.name ASC` | an Owner deciding to add a product |
+| `GET /suppliers` | `SuppliersService.findAll` | none | `name ASC` | an Owner deciding to add a supplier |
+| `GET /categories` | `CategoriesService.findAll` | none | `name ASC` | an Owner deciding to add a category |
+| `GET /users` | `UsersService.findAll` | none | `id ASC` | an Owner deciding to add an account |
+
+**Phase 9 gave a reason for capping `/audit-events` that was true but narrower than
+necessary** — *"this table grows without any user doing anything, from every failed
+login anywhere on the internet."* The stronger form, which was already true on the day
+Phase 9 shipped, is: *a read whose result size is a function of how long the business
+has been running is unbounded, and which mechanism does the growing is irrelevant to
+that.* `inventory_transactions` qualifies under the stronger form and always did;
+`audit_events` was merely the first table where an adversary rather than a customer
+supplied the rows, which is what made it visible. Acting on the narrow form is what
+left the two transaction reads uncapped for two phases. Recorded here because this
+file's job is to notice when a stated reason was doing less work than the real one.
+
+**The four catalogue reads are left uncapped deliberately, and that is a third named,
+unenforced precondition of the same shape as the two already in this file** (the
+in-memory throttle store; the best-effort audit write): *this business will not
+accumulate more products, suppliers, categories, or users than one response can carry.*
+Nothing checks it, and nothing reports it failing — a Product List of a few hundred
+rows just gets slower. It is not bounded here because a truncated catalogue is a
+*wrong answer* where a truncated log is a *reading position*: capping a catalogue
+honestly needs a total, a next page, or a rethink of the screen's filters — a paging
+design, deferred with a concrete trigger (`docs/phase-11-plan.md` §7). There is also a
+mechanical reason a naive `LIMIT` cannot go on `/products`: `ProductsService.findAll`
+filters `status=low`/`status=out` in application code *after* the SQL runs, because
+both depend on current stock, so a pushed-down `LIMIT` would take the first N products
+by name and only then filter.
+
+That this file now holds **three** preconditions of one shape — correct at this
+project's scale, silently invalidated by growth or by a second process, never checked
+— is itself the observation: it is the pattern this codebase reaches for, not three
+coincidences.

@@ -222,6 +222,100 @@ name which one, and don't extend it past the column that experiment covered with
 running another. See `docs/phase-10-plan.md` §1 and §5 for how all three rounds were
 tested, and `docs/learning-notes/testing-strategy.md`'s note on ambient dependencies.
 
+## `take` / `addOrderBy` / the `limit + 1` probe (Phase 11)
+
+Phase 11 (`docs/phase-11-plan.md`) capped the two transaction log reads. Three
+mechanics were worth writing down.
+
+**`take()` vs `limit()` in the query builder — measured, not assumed.** `qb.limit(n)`
+puts a literal `LIMIT n` on the SQL. `qb.take(n)` is the *entity-aware* version: a
+single joined `LIMIT` would cut rows in the flattened join result rather than parent
+entities, so one parent with three joined children could eat three of your `n`.
+
+TypeORM decides between the two on **the presence of joins, not their cardinality** —
+any `leftJoinAndSelect` plus `take` switches it to a two-query form. It is worth knowing
+exactly what that form is and what it costs, because the intuition that it must be
+slower (an unlimited inner subquery! a second round trip!) is half right and half wrong,
+and only one of those halves matters. Captured by running the real query builders
+against a real 5,000-row database with SQL logging on:
+
+```
+listAll().take(101)  ->  TWO queries
+  [0] SELECT DISTINCT "distinctAlias"."tx_id", "distinctAlias"."tx_occurred_at"
+      FROM ( SELECT … FROM inventory_transactions tx
+             LEFT JOIN products … LEFT JOIN suppliers … LEFT JOIN users … ) "distinctAlias"
+      ORDER BY "distinctAlias"."tx_occurred_at" DESC, "distinctAlias"."tx_id" DESC
+      LIMIT 101                                    -- note: the INNER select has no LIMIT
+  [1] SELECT … FROM inventory_transactions tx LEFT JOIN … LEFT JOIN … LEFT JOIN …
+      WHERE tx.id IN (5000, 4995, … 101 literal ids)
+      ORDER BY tx.occurred_at DESC, tx.id DESC
+
+listAll().limit(101) ->  ONE query
+  SELECT … FROM inventory_transactions tx LEFT JOIN … LEFT JOIN … LEFT JOIN …
+  ORDER BY tx.occurred_at DESC, tx.id DESC LIMIT 101
+```
+
+The inner subquery having no `LIMIT` looks alarming and is not. `EXPLAIN (ANALYZE,
+BUFFERS)` on the generated SQL verbatim:
+
+| | plan | index used | buffers | exec |
+|---|---|---|---|---|
+| `take` [0] | `Limit → Unique → Index Scan` | `IDX_inventory_transactions_occurred_at_id` | 8 | 0.11 ms |
+| `take` [1] | PK scan of the 101 ids + joins + sort | primary key | 512 | 0.65 ms |
+| `limit` | `Limit → Nested Loop Left Join ×3` | `IDX_inventory_transactions_occurred_at_id` | 128 | 0.46 ms |
+
+**Both forms are bounded at the database level, and both use the phase's index.**
+Postgres pushes the `LIMIT` down through the subquery and the `Unique` node, so the
+inner select is never materialised — no sequential scan, no full sort, 101 rows read.
+The "unlimited inner query" reads like a full table scan and is not one.
+
+So `take()` is **kept** in `listAll`, `listForProduct`, and `AuditService.findAll`. It
+would be *semantically* safe to switch these three to `limit()` — every join involved
+(`product`, `supplier`, `recordedBy`, `actor`, `subject`) is `@ManyToOne`, so no row
+multiplication is possible and the two forms return identical ids, verified — and
+`limit()` is measurably lighter (128 buffers and one round trip against 520 and two).
+But that is a performance refinement, not a correctness fix, and `take()` is the form
+that stays correct if a `@OneToMany` is ever joined into one of these reads. The
+distinction worth carrying: **`take()` is defensive against a join shape these queries
+do not currently have; `limit()` is an optimisation that would have to be revisited if
+they ever did.**
+
+One incidental confirmation from the same run: the entity's `@Index(['occurredAt','id'])`
+builds as `(occurred_at ASC, id ASC)` under `synchronize`, while the migration ships
+`(occurred_at DESC, id DESC)`. Postgres used the ASC index with an **Index Scan
+Backward** and the DESC index with a forward scan, at identical cost — so the deliberate
+divergence noted in `inventory-transaction.entity.ts` really is cosmetic, now checked
+rather than asserted.
+
+**A `LIMIT` over a non-total `ORDER BY` returns an arbitrary subset.** `listAll`
+ordered by `tx.occurredAt DESC` alone. That was harmless while it returned every
+matching row — the client saw a complete set in *some* valid order. Add a `LIMIT` and
+it stops being harmless: `occurred_at` comes from `<input type="date">`, so every
+transaction recorded for one business day is byte-identical in that column, and a busy
+day is a tie of dozens of rows. `SELECT … ORDER BY occurred_at DESC LIMIT 100` lets
+Postgres pick *any* 100 of the tied rows, and it is under no obligation to pick the
+same ones twice — a plan change, a vacuum, or a new index is enough to shuffle them.
+The user-visible failure: refreshing the history screen changes which of today's
+movements show, and a row that was visible is gone with no page to find it on. The fix
+is `.addOrderBy('tx.id', 'DESC')` — `id` is the primary key, so the composite order is
+total by construction (and `id DESC` is also insertion order within a day). The index
+`1787830000000-AddInventoryTransactionsOccurredAtIndex` is `(occurred_at DESC, id DESC)`
+so it can satisfy that exact order as an index scan.
+
+**Knowing there is more without paying for `COUNT(*)`.** To tell a caller "your result
+was capped" you need to know whether more rows matched. A second `SELECT COUNT(*)` over
+the same filtered set is the obvious way and the wrong one — it reintroduces the
+full scan the cap exists to avoid. Instead: **ask for `limit + 1`, return `limit`.** If
+the extra row came back, more exist (`truncated = true`); if it didn't, the set is
+complete and `limit == matched` returns everything with no flag. One integer added to
+the existing `take()`, no extra query, no join. The controller turns the flag into an
+`X-Result-Truncated` response header (`docs/phase-11-plan.md` §1).
+
+**The generalizable lesson**, in this file's usual currency: **sorting and limiting are
+one operation, not two.** A sort that was good enough to *display* a full result
+becomes a correctness bug the moment something downstream cuts it off — the cut is only
+well-defined if the sort is total.
+
 ## Common Mistakes
 
 - Giving a nullable TypeScript field (`string | null`) a `@Column()` with no explicit

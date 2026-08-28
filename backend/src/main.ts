@@ -1,6 +1,7 @@
 import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
 import { NestFactory, Reflector } from '@nestjs/core';
 import { AppModule } from './app.module';
+import { CORS_OPTIONS } from './common/cors-options';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 async function bootstrap() {
@@ -10,7 +11,11 @@ async function bootstrap() {
   // this API's origin), so the browser's same-origin policy would block its fetch()
   // calls without this. In a real deployment you'd list the actual frontend origin(s)
   // instead of allowing everything.
-  app.enableCors();
+  //
+  // Phase 11: the options are no longer empty — `exposedHeaders` is what makes
+  // X-Result-Truncated and Retry-After readable by page JavaScript at all. See
+  // common/cors-options.ts for why omitting either fails silently rather than loudly.
+  app.enableCors(CORS_OPTIONS);
 
   // A Validation Pipe runs before a request reaches its controller method, checking
   // the incoming body/query against the class-validator decorators on the target DTO

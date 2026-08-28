@@ -196,3 +196,12 @@ These affect the UI mockup and should be resolved before or during that phase.
   same shape as the Phase 7 entry above rather than Phase 9's: §4 gains no user goal
   and §5 gains no use case. It resolves none of §10's open questions — Q-4, Q-6, and
   Q-7 remain exactly as open as before.
+- **[Added 2026-08-27, Phase 11]** Bounded reads (`docs/phase-11-plan.md`,
+  `api.md`, `requirements.md`'s Phase 11 note) — the two transaction log reads are now
+  capped at a `limit`, the way `/audit-events` already was, and a capped response says
+  so with an `X-Result-Truncated` header. Same shape as the Phase 7 and Phase 10
+  entries, not Phase 9's: §4 gains no user goal, §5 gains no use case, §7 gains no
+  scope. It resolves none of §10's open questions — Q-4, Q-6, and Q-7 remain exactly
+  as open as before. Bounding the four catalogue reads (`/products`, `/suppliers`,
+  `/categories`, `/users`) is explicitly out of scope and deferred with a concrete
+  trigger (`docs/phase-11-plan.md` §7).

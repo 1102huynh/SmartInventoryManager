@@ -285,6 +285,14 @@ write and its read both happen in Node's zone, so the everyday mismatch this pha
 otherwise closes never applied to it. Its actual, narrower exposure is the one this
 paragraph opens with.
 
+**[2026-08-27, Phase 11]** No new BR, the second such line after Phase 10's. A cap on
+a read is a property of a transport, not a rule about the business. BR-050 (what must
+be recorded), BR-051 (immutability), and BR-062 (dashboard scope) all say exactly what
+they said before — which rows a client receives changes nothing about what is true of
+the rows. `docs/phase-11-plan.md` §1 records why FR-030/FR-031's word "all" is a
+statement about the screen's subject, not a guarantee about one response, and
+`requirements.md`'s Phase 11 note carries that reading.
+
 ## Rules Explicitly Deferred (Future scope, not defined now)
 
 - Pricing/cost rules (cost of goods, valuation) — depends on product.md Q-1.

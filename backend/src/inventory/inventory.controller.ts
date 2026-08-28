@@ -6,11 +6,15 @@ import {
   ParseIntPipe,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { CurrentUserId } from '../common/decorators/current-user-id.decorator';
+import { RESULT_TRUNCATED_HEADER } from '../common/result-truncated.header';
 import { CreateAdjustmentDto } from './dto/create-adjustment.dto';
 import { CreateStockInDto } from './dto/create-stock-in.dto';
 import { CreateStockOutDto } from './dto/create-stock-out.dto';
+import { QueryProductTransactionsDto } from './dto/query-product-transactions.dto';
 import { QueryTransactionsDto } from './dto/query-transactions.dto';
 import { InventoryService } from './inventory.service';
 
@@ -50,13 +54,32 @@ export class InventoryController {
     return this.inventoryService.recordAdjustment(productId, dto, userId);
   }
 
+  // Phase 11 (docs/phase-11-plan.md §2): both reads are bounded now. The service
+  // returns { rows, truncated }; the controller sets X-Result-Truncated when there
+  // was more and returns the bare array the frontend and the e2e specs already
+  // destructure — @Res({ passthrough: true }) lets a header be set without taking
+  // over the response, so the ClassSerializerInterceptor still runs.
   @Get('products/:id/transactions')
-  listForProduct(@Param('id', ParseIntPipe) productId: number) {
-    return this.inventoryService.listForProduct(productId);
+  async listForProduct(
+    @Param('id', ParseIntPipe) productId: number,
+    @Query() query: QueryProductTransactionsDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { rows, truncated } = await this.inventoryService.listForProduct(
+      productId,
+      query,
+    );
+    if (truncated) res.setHeader(RESULT_TRUNCATED_HEADER, 'true');
+    return rows;
   }
 
   @Get('inventory-transactions')
-  listAll(@Query() query: QueryTransactionsDto) {
-    return this.inventoryService.listAll(query);
+  async listAll(
+    @Query() query: QueryTransactionsDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { rows, truncated } = await this.inventoryService.listAll(query);
+    if (truncated) res.setHeader(RESULT_TRUNCATED_HEADER, 'true');
+    return rows;
   }
 }

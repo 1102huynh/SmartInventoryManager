@@ -16,7 +16,11 @@ describe('DashboardService', () => {
   const repo = { find: jest.fn() };
   const inventoryService = {
     getCurrentStockMap: jest.fn(),
-    listAll: jest.fn().mockResolvedValue([]),
+    // Phase 11 (docs/phase-11-plan.md §2): listAll returns { rows, truncated } now,
+    // and the 7-day count comes from a dedicated countSince rather than a second
+    // full read.
+    listAll: jest.fn().mockResolvedValue({ rows: [], truncated: false }),
+    countSince: jest.fn().mockResolvedValue(0),
   };
 
   function product(overrides: Partial<Product>): Product {
@@ -34,7 +38,8 @@ describe('DashboardService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    inventoryService.listAll.mockResolvedValue([]);
+    inventoryService.listAll.mockResolvedValue({ rows: [], truncated: false });
+    inventoryService.countSince.mockResolvedValue(0);
     const moduleRef = await Test.createTestingModule({
       providers: [
         DashboardService,
@@ -54,6 +59,19 @@ describe('DashboardService', () => {
 
     expect(summary.outOfStockCount).toBe(1);
     expect(summary.needsAttention).toHaveLength(0);
+  });
+
+  // Phase 11 (docs/phase-11-plan.md §5): the one place the phase's actual defect — a
+  // dashboard that reads the whole transaction table — can be pinned as a regression
+  // guard. Cheap, and it goes red if getSummary reverts to `listAll({})`.
+  it('reads recent activity with a bounded limit, not the whole table', async () => {
+    repo.find.mockResolvedValue([]);
+    inventoryService.getCurrentStockMap.mockResolvedValue(new Map());
+
+    await service.getSummary();
+
+    expect(inventoryService.listAll).toHaveBeenCalledWith({ limit: 8 });
+    expect(inventoryService.countSince).toHaveBeenCalledWith(7);
   });
 
   it('includes an out-of-stock product that DOES have a threshold in both counts', async () => {

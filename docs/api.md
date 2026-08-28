@@ -1,6 +1,6 @@
-# API Documentation — Phase 10
+# API Documentation — Phase 11
 
-Status: Phase 10 — Schema-Wide `timestamptz`
+Status: Phase 11 — Bounded Reads
 Base URL: `http://localhost:3000` (see `backend/.env.example`)
 
 Every resource response includes `createdAt` (an ISO timestamp, server-set, never
@@ -48,18 +48,33 @@ return `409` with `{ statusCode, message: string, error }`. Not-found resources 
 
 **Phase 8 (`docs/phase-8-plan.md`): rate limiting returns `429`** with the same
 `{ statusCode, message, error }` shape as every other error, plus a `Retry-After`
-header (seconds until the window clears). Every route is capped at a generous global
-default (120 requests / 60 seconds per client address); `POST /auth/login` and
-`PATCH /auth/password` additionally carry a much tighter limit (10 attempts / 5
-minutes) — the throttler guard runs first, ahead of `JwtAuthGuard`, so an over-limit
-request never reaches password verification (BR-079). Both limits are configurable
-(`backend/.env.example`).
+header (seconds until the window clears). `Retry-After` is named in
+`Access-Control-Expose-Headers` (Phase 11), so a cross-origin browser caller can read
+it — the same mechanism `X-Result-Truncated` relies on. Every route is capped at a
+generous global default (120 requests / 60 seconds per client address); `POST
+/auth/login` and `PATCH /auth/password` additionally carry a much tighter limit (10
+attempts / 5 minutes) — the throttler guard runs first, ahead of `JwtAuthGuard`, so an
+over-limit request never reaches password verification (BR-079). Both limits are
+configurable (`backend/.env.example`).
 
 **Phase 9 (`docs/phase-9-plan.md`): every write on `/users`, `/products`,
 `/suppliers`, and `/categories` now also records an audit event** (BR-082), and every
 `POST /auth/login` attempt does too. This is a side effect, not a documented response
 change — no route below gains a new field, status code, or error shape because of it;
 see the "Audit Log" section for the one new route this phase actually adds.
+
+**Phase 11 (`docs/phase-11-plan.md`): the two transaction log reads are capped.**
+`GET /inventory-transactions` and `GET /products/:id/transactions` now accept `limit`
+(default 100, max 500; `1 <= limit <= 500` or `400`, never a silent clamp) and return
+at most that many rows, newest-first, with no offset pagination — the same shape
+`/audit-events` has carried since Phase 9. When more rows matched than were returned,
+the response carries **`X-Result-Truncated: true`**; the header is *absent* otherwise,
+so its presence is the signal, not its value. It appears on exactly those three routes
+(`/inventory-transactions`, `/products/:id/transactions`, `/audit-events`) and no
+others. The four catalogue reads (`/products`, `/suppliers`, `/categories`, `/users`)
+are deliberately **not** capped — a truncated catalogue is a wrong answer where a
+truncated log is a reading position; bounding them needs a paging design, deferred
+(`docs/phase-11-plan.md` §7).
 
 ## Auth
 
@@ -117,8 +132,32 @@ see `docs/phase-5-plan.md` §1 "Adjustments stay open to Staff".
 
 | Method | Path | Query | Notes |
 |---|---|---|---|
-| GET | `/products/:id/transactions` | | One product's full history, newest first |
-| GET | `/inventory-transactions` | `?type=stock_in\|stock_out\|adjustment&productId=&supplierId=&days=` | Global history; also backs the Supplier Detail "received from" panel via `supplierId` |
+| GET | `/products/:id/transactions` | `?limit=` | One product's history, newest first (`occurred_at DESC, id DESC`), capped — `limit` default 100, max 500. `X-Result-Truncated: true` when more matched. |
+| GET | `/inventory-transactions` | `?type=stock_in\|stock_out\|adjustment&productId=&supplierId=&days=&limit=` | Global history; also backs the Supplier Detail "received from" panel via `supplierId`. Newest first (`occurred_at DESC, id DESC`), capped — `limit` default 100, max 500; `days >= 1`. `X-Result-Truncated: true` when more matched. |
+
+Both reads are ordered `occurred_at DESC, id DESC` — the `id` tie-break matters:
+`occurred_at` is a user-supplied date-only value, so a whole business day's rows are
+identical in it, and a `LIMIT` over `occurred_at` alone would return an arbitrary
+subset of a tie (`docs/phase-11-plan.md` §1). `limit` and `days` are validated — an
+out-of-range value is `400`, never silently reinterpreted. There is no offset or
+cursor pagination; "the most recent N, narrow with filters" is the whole model.
+
+**`?days=N` covers exactly `N` calendar dates, ending with today.** `?days=7` returns
+transactions dated **today and the previous six dates**; `?days=1` returns today alone.
+A transaction dated six days ago is included, one dated seven days ago is not. The
+answer does not change with the hour the request is made — the cutoff is the start of
+the date `N - 1` days back, not `N` days back with the current clock left on it. This
+is a calendar window, not a rolling 168-hour one, and not eight inclusive dates.
+`/audit-events?days=N` carries the identical contract, so "Last N days" means one thing
+across the API (its `createdAt` is a real instant rather than a date, so it reaches that
+contract by a different cutoff — see `backend/src/common/days-cutoff.ts`).
+
+**An unsupported query parameter on either route is `400`, not ignored.** Both now bind
+a DTO, and the global `ValidationPipe` runs with `forbidNonWhitelisted: true`, so
+`?foo=1` — or a misspelled `?limits=50` — is rejected rather than silently dropped.
+Worth stating because `GET /products/:id/transactions` bound no DTO before Phase 11 and
+therefore ignored every query parameter it was given; a client appending a cache-buster
+to that URL would have been fine before and is not now.
 
 Transaction responses embed `product`, `supplier` (nullable), and `recordedBy` as full
 nested objects (a joined read) — the frontend never needs a second request to show
@@ -160,9 +199,12 @@ audit log — see "Audit Log" below.
 
 **Owner only** — a single class-level `@Roles(UserRole.Owner)` on `AuditController`
 (BR-084), the second controller in the app to use the class-level form after
-`UsersController` above. Newest-first (`id DESC`), no offset pagination — filters
-plus a `limit` (default 100, max 500; a larger request is `400`, not silently
-clamped) are the only way to narrow a result. A read event's `actor` and `subject`
+`UsersController` above. Newest-first (`id DESC` — already a total order, so no
+tie-break was needed here, unlike the transaction reads), no offset pagination —
+filters plus a `limit` (default 100, max 500; a larger request is `400`, not silently
+clamped) are the only way to narrow a result. As of Phase 11, a capped response also
+carries **`X-Result-Truncated: true`** — this route had been truncating silently since
+Phase 9 and no longer does. A read event's `actor` and `subject`
 are full nested `User` objects (a joined read, the same choice `GET
 /inventory-transactions` makes for `recordedBy`) — `null` on either when there's no
 actor (every anonymous authentication event) or no subject (an administrative event
@@ -173,7 +215,7 @@ about a deleted product still names it, by id, after the product itself is gone
 
 | Method | Path | Query | Notes |
 |---|---|---|---|
-| GET | `/audit-events` | `?eventType=&actorUserId=&subjectUserId=&days=&limit=` | `eventType` is one of the closed list in `docs/phase-9-plan.md` §1 (`login_succeeded`, `login_failed`, `account_locked`, `password_changed`, `user_created`, `user_updated`, `user_status_changed`, `user_password_reset`, `product_created`, `product_updated`, `product_status_changed`, `product_deleted`, `supplier_created`, `supplier_updated`, `supplier_status_changed`, `category_created`, `category_updated`, `category_deleted`). `days` and `limit` are both validated (`days >= 1`, `1 <= limit <= 500`) — an out-of-range value is `400`, never silently reinterpreted. |
+| GET | `/audit-events` | `?eventType=&actorUserId=&subjectUserId=&days=&limit=` | `eventType` is one of the closed list in `docs/phase-9-plan.md` §1 (`login_succeeded`, `login_failed`, `account_locked`, `password_changed`, `user_created`, `user_updated`, `user_status_changed`, `user_password_reset`, `product_created`, `product_updated`, `product_status_changed`, `product_deleted`, `supplier_created`, `supplier_updated`, `supplier_status_changed`, `category_created`, `category_updated`, `category_deleted`). `days` and `limit` are both validated (`days >= 1`, `1 <= limit <= 500`) — an out-of-range value is `400`, never silently reinterpreted. `days=N` carries the same contract as `/inventory-transactions`: exactly `N` calendar dates ending with today, so `days=7` is today plus the previous six dates and `days=1` is today alone. |
 
 Response items: `{ id, eventType, actor: User|null, actorUserId: number|null, subject: User|null, subjectUserId: number|null, entityType: string|null, entityId: number|null, summary: string, actorIp: string|null, createdAt }`. `actorIp` is set only on authentication events (`login_succeeded`/`login_failed`/`account_locked`) — `null` on every administrative one (scope fork A, `docs/phase-9-plan.md` §1). `summary` is a short human sentence composed by the service that recorded the event — never a field-level diff, and never a password, hash, or token.
 

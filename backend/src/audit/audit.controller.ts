@@ -1,5 +1,7 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { Roles } from '../common/decorators/roles.decorator';
+import { RESULT_TRUNCATED_HEADER } from '../common/result-truncated.header';
 import { UserRole } from '../common/enums/user-role.enum';
 import { AuditService } from './audit.service';
 import { QueryAuditEventsDto } from './dto/query-audit-events.dto';
@@ -18,8 +20,17 @@ import { QueryAuditEventsDto } from './dto/query-audit-events.dto';
 export class AuditController {
   constructor(private readonly auditService: AuditService) {}
 
+  // Phase 11 (docs/phase-11-plan.md §1): the cap this route has had since Phase 9 stops
+  // being silent. The service returns { rows, truncated }; the controller sets
+  // X-Result-Truncated when more matched and returns the bare array every existing
+  // caller (Store.listAuditEvents, the e2e specs) already expects.
   @Get()
-  findAll(@Query() query: QueryAuditEventsDto) {
-    return this.auditService.findAll(query);
+  async findAll(
+    @Query() query: QueryAuditEventsDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { rows, truncated } = await this.auditService.findAll(query);
+    if (truncated) res.setHeader(RESULT_TRUNCATED_HEADER, 'true');
+    return rows;
   }
 }

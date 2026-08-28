@@ -6,15 +6,32 @@ import {
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
+import { daysCutoffForDateColumn } from '../common/days-cutoff';
 import { EntityStatus } from '../common/enums/entity-status.enum';
 import { TransactionType } from '../common/enums/transaction-type.enum';
+import { BoundedResult, trimToLimit } from '../common/result-truncated.header';
 import { Product } from '../products/product.entity';
 import { Supplier } from '../suppliers/supplier.entity';
 import { CreateAdjustmentDto } from './dto/create-adjustment.dto';
 import { CreateStockInDto } from './dto/create-stock-in.dto';
 import { CreateStockOutDto } from './dto/create-stock-out.dto';
+import { QueryProductTransactionsDto } from './dto/query-product-transactions.dto';
 import { QueryTransactionsDto } from './dto/query-transactions.dto';
 import { InventoryTransaction } from './inventory-transaction.entity';
+
+// Phase 11 (docs/phase-11-plan.md §1 "Configuration or constants: constants, following
+// Phase 9"). Copies AuditService's `const DEFAULT_LIMIT = 100` exactly — no
+// configuration.ts entry, no .env.example line: no deployment tunes a page size, and
+// the tests set `limit` per request through the query string. The ceiling (500) is
+// @Max(500) in the two query DTOs, validation rather than a clamp.
+const DEFAULT_LIMIT = 100;
+
+// The internal shape both list reads return: the rows the caller asked for, plus
+// whether the database had more. The controller turns `truncated` into a response
+// header and returns `rows` — HTTP knowledge stays out of the service, and callers
+// that only want the rows (DashboardService) read `.rows`. The trimming rule itself is
+// shared with AuditService (common/result-truncated.header.ts), not repeated here.
+export type BoundedTransactions = BoundedResult<InventoryTransaction>;
 
 @Injectable()
 export class InventoryService {
@@ -77,21 +94,49 @@ export class InventoryService {
     return new Map(productIds.map((id) => [id, withHistory.has(id)]));
   }
 
-  listForProduct(productId: number): Promise<InventoryTransaction[]> {
-    return this.transactionsRepository.find({
-      where: { productId },
-      relations: { supplier: true, recordedBy: true },
-      order: { occurredAt: 'DESC' },
-    });
+  // Phase 11 (docs/phase-11-plan.md §1). Bounded, newest-first, no offset pagination.
+  //
+  // The ordering is `occurred_at DESC, id DESC`, not `occurred_at DESC` alone, and
+  // the `id` tie-break is the sharpest point of the phase: occurred_at comes from
+  // <input type="date">, so every row recorded for one business day is byte-identical
+  // in it, and a LIMIT over a non-total order returns an arbitrary subset — refreshing
+  // the screen would shuffle which of today's movements show. `id` is the PRIMARY KEY,
+  // so the composite is total by construction, and it also happens to be insertion
+  // order within a day. Backed by IDX_inventory_transactions_occurred_at_id.
+  //
+  // Truncation is observable without a COUNT(*): ask for `limit + 1`, return `limit`,
+  // and report whether the extra row existed. `limit == matched` returns the full set
+  // with truncated=false — the extra row was asked for and genuinely did not exist.
+  async listForProduct(
+    productId: number,
+    query: QueryProductTransactionsDto,
+  ): Promise<BoundedTransactions> {
+    const limit = query.limit ?? DEFAULT_LIMIT;
+    // Moved from repository.find to the query builder so `take` and `addOrderBy` read
+    // the same way as listAll; the joined relations are the same two find() loaded
+    // (supplier, recordedBy) — not product, which the caller already has.
+    const rows = await this.transactionsRepository
+      .createQueryBuilder('tx')
+      .leftJoinAndSelect('tx.supplier', 'supplier')
+      .leftJoinAndSelect('tx.recordedBy', 'recordedBy')
+      .where('tx.productId = :productId', { productId })
+      .orderBy('tx.occurredAt', 'DESC')
+      .addOrderBy('tx.id', 'DESC')
+      .take(limit + 1)
+      .getMany();
+    return trimToLimit(rows, limit);
   }
 
-  listAll(query: QueryTransactionsDto): Promise<InventoryTransaction[]> {
+  async listAll(query: QueryTransactionsDto): Promise<BoundedTransactions> {
+    const limit = query.limit ?? DEFAULT_LIMIT;
     const qb = this.transactionsRepository
       .createQueryBuilder('tx')
       .leftJoinAndSelect('tx.product', 'product')
       .leftJoinAndSelect('tx.supplier', 'supplier')
       .leftJoinAndSelect('tx.recordedBy', 'recordedBy')
-      .orderBy('tx.occurredAt', 'DESC');
+      .orderBy('tx.occurredAt', 'DESC')
+      .addOrderBy('tx.id', 'DESC')
+      .take(limit + 1);
 
     if (query.type) qb.andWhere('tx.type = :type', { type: query.type });
     if (query.productId)
@@ -101,11 +146,25 @@ export class InventoryService {
         supplierId: query.supplierId,
       });
     if (query.days) {
-      const cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - query.days);
-      qb.andWhere('tx.occurredAt >= :cutoff', { cutoff });
+      qb.andWhere('tx.occurredAt >= :cutoff', {
+        cutoff: daysCutoffForDateColumn(query.days),
+      });
     }
-    return qb.getMany();
+    return trimToLimit(await qb.getMany(), limit);
+  }
+
+  // Phase 11 (docs/phase-11-plan.md §2). Replaces DashboardService's second full read
+  // of the transaction table (`listAll({ days: 7 }).length`) — a COUNT(*) with the
+  // same cutoff, no joins, no rows materialised. Only the mechanism changed (a full
+  // read became a count); the window it counts is the calendar window defined by
+  // daysCutoffForDateColumn (common/days-cutoff.ts).
+  countSince(days: number): Promise<number> {
+    return this.transactionsRepository
+      .createQueryBuilder('tx')
+      .where('tx.occurredAt >= :cutoff', {
+        cutoff: daysCutoffForDateColumn(days),
+      })
+      .getCount();
   }
 
   // ------------------------------------------------------------ Writes --

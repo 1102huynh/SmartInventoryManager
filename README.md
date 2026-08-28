@@ -108,9 +108,47 @@ See `docs/learning-notes/testing-strategy.md` for what each of these actually pr
 
 ## Current phase
 
-Phase 10 — Schema-wide `timestamptz` (`docs/phase-10-plan.md`): all eleven plain
-`TIMESTAMP` columns across six tables (`products`, `suppliers`, `users`, `categories`,
-`inventory_transactions.created_at`, `audit_events.created_at`, plus
+Phase 11 — Bounded reads (`docs/phase-11-plan.md`): the two transaction log reads —
+`GET /inventory-transactions` and `GET /products/:id/transactions` — now accept a
+`limit` (default 100, max 500) and return at most that many rows, newest-first
+(`occurred_at DESC, id DESC`), the same cap `/audit-events` has carried since Phase 9.
+When more rows matched than were returned, the response carries
+`X-Result-Truncated: true`; `/audit-events` gets that header retroactively, since it
+had been truncating silently. The dashboard no longer materialises the whole
+transaction table to show eight rows and one count. The four catalogue reads
+(`/products`, `/suppliers`, `/categories`, `/users`) are deliberately left uncapped —
+a truncated catalogue is a wrong answer where a truncated log is a reading position;
+paging them is a deferred product decision (`docs/phase-11-plan.md` §7).
+
+**The history screen showing "the most recent 100 movements" is the feature, not a
+broken query** — `?days=` or a product filter is how to see past it, and the screen
+says so with a line above the table when it truncated. Four screens show that line:
+Inventory History, Product Detail's history panel, Supplier Detail's "received from"
+panel, and the Audit Log.
+
+**One cross-origin detail that would fail silently if it is ever undone.** That line is
+driven by the `X-Result-Truncated` response header, and the frontend runs on its own
+origin (`:5173`) from the API (`:3000`). A browser lets page JavaScript read only a
+short safelist of response headers unless the server names the rest in
+`Access-Control-Expose-Headers` — which is why `app.enableCors()` in
+`backend/src/main.ts` is called with `CORS_OPTIONS`
+(`backend/src/common/cors-options.ts`) rather than with no arguments. Drop that list
+and nothing errors: the API still sends the header, `curl` still shows it, the whole
+backend suite still passes, and the notice simply never appears again while the screens
+keep truncating. `app.e2e-spec.ts` asserts the server half (the response really does
+carry `Access-Control-Expose-Headers`); the browser half is checked by loading the app
+against a database with more than 100 transactions and looking for the line.
+
+**After pulling this, run `npm run migration:run` against `smart_inventory` *and*
+against `smart_inventory_e2e`** (set `DB_DATABASE=smart_inventory_e2e` first). This
+phase ships one additive migration — a `CREATE INDEX` on
+`inventory_transactions (occurred_at DESC, id DESC)`. The e2e database is the one
+that's easy to forget, and forgetting it doesn't look like a broken migration — the
+e2e suite just runs against a stale schema and passes.
+
+Earlier phases: Phase 10 — Schema-wide `timestamptz` (`docs/phase-10-plan.md`): all
+eleven plain `TIMESTAMP` columns across six tables (`products`, `suppliers`, `users`,
+`categories`, `inventory_transactions.created_at`, `audit_events.created_at`, plus
 `users.locked_until`) are now `timestamptz`, converted in one migration. This closes a
 question parked by name in three consecutive phases (Phase 7 §7, Phase 8 §1, Phase 9
 §1): a plain `TIMESTAMP` stores a clock reading, not an instant, and it does not record
@@ -123,12 +161,6 @@ string the API returns is byte-for-byte what it was before this phase; what chan
 that it now survives Node and Postgres disagreeing about a zone, which it would not
 have before. See `docs/architecture-observations.md`'s resolved entry for the full
 argument.
-
-**After pulling this, run `npm run migration:run` against `smart_inventory` *and*
-against `smart_inventory_e2e`** (set `DB_DATABASE=smart_inventory_e2e` first). The e2e
-database is the one that's easy to forget, and forgetting it doesn't look like a
-broken migration — the e2e suite just runs against a stale schema and passes, so the
-phase looks green while having changed nothing the e2e tests touch.
 
 Earlier phases: Phase 9 — Audit log (`docs/phase-9-plan.md`) added a single
 append-only `audit_events` table that records who did what, and when — both halves

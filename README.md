@@ -73,7 +73,11 @@ requests" while developing.
 Only `alex@example.com` (Owner) can create/edit/deactivate/delete products,
 suppliers, and categories (`docs/phase-5-plan.md`) — signing in as Jordan or Sam
 (Staff) hides those actions in the UI, so seeing fewer buttons than Alex sees is
-expected, not a bug. Both roles can record stock-in, stock-out, and adjustments.
+expected, not a bug. Both roles can record stock-in and stock-out directly. **As of
+Phase 12, signing in as Jordan or Sam and recording an adjustment produces "Sent for
+approval," not a stock change — that is the feature, not a failed write.** The Owner
+approves or rejects it at `#/approvals`; an Owner's own adjustment is still recorded
+immediately.
 
 **Managing accounts** (`docs/phase-6-plan.md`): an Owner manages every account —
 create, edit, deactivate/reactivate, reset password — at `#/users`. Any signed-in
@@ -108,9 +112,29 @@ See `docs/learning-notes/testing-strategy.md` for what each of these actually pr
 
 ## Current phase
 
-Phase 11 — Bounded reads (`docs/phase-11-plan.md`): the two transaction log reads —
-`GET /inventory-transactions` and `GET /products/:id/transactions` — now accept a
-`limit` (default 100, max 500) and return at most that many rows, newest-first
+Phase 12 — Adjustment approval (`docs/phase-12-plan.md`): resolves `product.md` Q-6,
+open by name since Phase 5. A **Staff-initiated** adjustment is now a *request* an Owner
+approves or rejects at `#/approvals` before it changes stock; an **Owner-initiated**
+adjustment is recorded immediately, exactly as before. `POST /products/:id/adjustments`
+returns `201` + a transaction for an Owner, `202` + a request for Staff. Two new routes
+(`GET /adjustment-requests`, `PATCH /adjustment-requests/:id/status`) and a new
+`AdjustmentsModule` that depends on `InventoryModule`, never the reverse — the extra
+capability sits *beside* the concurrency-sensitive core, not inside it, so the Phase 2
+extraction seam holds. `inventory_transactions` gains no column, constraint, or index;
+the delta is computed at approval under the same row lock the immediate path uses, and
+the approved transaction is attributed to the **requester**, not the approver. The new
+list read ships bounded on arrival with Phase 11's exact convention.
+
+**After pulling this, run `npm run migration:run` against `smart_inventory` *and*
+against `smart_inventory_e2e`** (set `DB_DATABASE=smart_inventory_e2e` first). This
+phase ships one additive migration — `CREATE TABLE adjustment_requests` plus its enum
+and two indexes; `down()` drops them and loses nothing. The e2e database is the one
+that's easy to forget, and forgetting it doesn't look like a broken migration — the
+e2e suite just runs against a stale schema and fails in a confusing place.
+
+Earlier phases: Phase 11 — Bounded reads (`docs/phase-11-plan.md`): the two transaction
+log reads — `GET /inventory-transactions` and `GET /products/:id/transactions` — now
+accept a `limit` (default 100, max 500) and return at most that many rows, newest-first
 (`occurred_at DESC, id DESC`), the same cap `/audit-events` has carried since Phase 9.
 When more rows matched than were returned, the response carries
 `X-Result-Truncated: true`; `/audit-events` gets that header retroactively, since it
@@ -139,12 +163,10 @@ keep truncating. `app.e2e-spec.ts` asserts the server half (the response really 
 carry `Access-Control-Expose-Headers`); the browser half is checked by loading the app
 against a database with more than 100 transactions and looking for the line.
 
-**After pulling this, run `npm run migration:run` against `smart_inventory` *and*
-against `smart_inventory_e2e`** (set `DB_DATABASE=smart_inventory_e2e` first). This
-phase ships one additive migration — a `CREATE INDEX` on
-`inventory_transactions (occurred_at DESC, id DESC)`. The e2e database is the one
-that's easy to forget, and forgetting it doesn't look like a broken migration — the
-e2e suite just runs against a stale schema and passes.
+Phase 11 also shipped one additive migration — a `CREATE INDEX` on
+`inventory_transactions (occurred_at DESC, id DESC)` — with the same
+run-against-both-databases caveat the Phase 12 note above repeats: the e2e database is
+the one that's easy to forget, and forgetting it doesn't look like a broken migration.
 
 Earlier phases: Phase 10 — Schema-wide `timestamptz` (`docs/phase-10-plan.md`): all
 eleven plain `TIMESTAMP` columns across six tables (`products`, `suppliers`, `users`,

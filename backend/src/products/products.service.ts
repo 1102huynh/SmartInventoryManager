@@ -5,7 +5,9 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { AdjustmentRequest } from '../adjustments/adjustment-request.entity';
 import { AuditService } from '../audit/audit.service';
+import { AdjustmentRequestStatus } from '../common/enums/adjustment-request-status.enum';
 import { AuditEntityType } from '../common/enums/audit-entity-type.enum';
 import { AuditEventType } from '../common/enums/audit-event-type.enum';
 import { EntityStatus } from '../common/enums/entity-status.enum';
@@ -31,6 +33,8 @@ export class ProductsService {
   constructor(
     @InjectRepository(Product)
     private readonly productsRepository: Repository<Product>,
+    @InjectRepository(AdjustmentRequest)
+    private readonly adjustmentRequestsRepository: Repository<AdjustmentRequest>,
     private readonly inventoryService: InventoryService,
     private readonly auditService: AuditService,
   ) {}
@@ -173,8 +177,7 @@ export class ProductsService {
       actorUserId: actorId,
       entityType: AuditEntityType.PRODUCT,
       entityId: id,
-      summary:
-        status === EntityStatus.ACTIVE ? 'Reactivated' : 'Deactivated',
+      summary: status === EntityStatus.ACTIVE ? 'Reactivated' : 'Deactivated',
     });
     return saved;
   }
@@ -188,6 +191,26 @@ export class ProductsService {
     if (await this.inventoryService.hasHistory(id)) {
       throw new ConflictException(
         'This product has transaction history and cannot be deleted — deactivate it instead.',
+      );
+    }
+    // BR-089 (Phase 12): adjustment_requests.product_id is RESTRICT for EVERY status,
+    // not just `pending` — a withdrawn or rejected request against a product with no
+    // transactions would otherwise sail past the BR-004 check above and then hit a raw
+    // FK violation surfacing as a 500. Check all statuses here; the message
+    // distinguishes a pending proposal (resolve or withdraw it) from a resolved one,
+    // which is history in the same sense BR-004 means and gets the same "deactivate
+    // instead" answer.
+    const requestCount = await this.adjustmentRequestsRepository.count({
+      where: { productId: id },
+    });
+    if (requestCount > 0) {
+      const pendingCount = await this.adjustmentRequestsRepository.count({
+        where: { productId: id, status: AdjustmentRequestStatus.PENDING },
+      });
+      throw new ConflictException(
+        pendingCount > 0
+          ? 'This product has a pending adjustment request — resolve or withdraw it before deleting.'
+          : 'This product has adjustment request history and cannot be deleted — deactivate it instead.',
       );
     }
     await this.productsRepository.remove(product);

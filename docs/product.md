@@ -64,6 +64,8 @@ complex logistics, or multi-warehouse operations.
 9. Manager opens the dashboard to get a quick health overview of the inventory.
 10. An Owner reviews the audit log after a colleague reports they cannot sign in.
     [Added 2026-08-25, Phase 9]
+11. Staff record a stocktake correction; an Owner reviews and approves it before stock
+    changes. [Added 2026-09-03, Phase 12 — resolves Q-6]
 
 ## 6. Product Scope
 
@@ -95,6 +97,10 @@ See `requirements.md` for the itemized functional requirements and their priorit
 - Supplier management (linked to stock-in)
 - Dashboard summary
 - Product categories
+- Adjustment approval — a Staff-initiated adjustment is a request an Owner approves or
+  rejects before it changes stock; an Owner's own adjustment is recorded immediately
+  [Added 2026-09-03, Phase 12 — resolves Q-6; see `requirements.md` FR-066,
+  `business-rules.md` BR-085–089]
 
 **Future (explicitly postponed):**
 - Multi-location / multi-warehouse inventory
@@ -102,11 +108,15 @@ See `requirements.md` for the itemized functional requirements and their priorit
 - Barcode / QR scanning
 - Batch, lot, and expiry-date tracking
 - Multi-unit conversion (e.g., box ↔ piece)
-- Per-permission access control beyond the two-role (Owner/Staff) split, and approval
-  workflows (e.g., adjustment approval — product.md Q-6) [rewritten 2026-08-21, Phase
-  6: "Role-based access control beyond basic user attribution" no longer means
-  anything after Phase 5 (the role split) and Phase 6 (Owner-administered accounts) —
-  this names what's actually still future instead]
+- Per-permission access control beyond the two-role (Owner/Staff) split [rewritten
+  2026-08-21, Phase 6: "Role-based access control beyond basic user attribution" no
+  longer means anything after Phase 5 (the role split) and Phase 6 (Owner-administered
+  accounts) — this names what's actually still future instead]
+- **General** approval workflows — approval on any write other than a Staff-initiated
+  adjustment (stock-in, stock-out, catalog and user changes), configurable approver
+  chains, magnitude thresholds [narrowed 2026-09-03, Phase 12: adjustment approval
+  itself has shipped (see Should Have above and Q-6); what stays Future is approval
+  *generalized* beyond that one case — `docs/phase-12-plan.md` §7]
 - Pricing, sales, invoicing, and accounting integration
 - Reporting/analytics beyond the basic dashboard
 - Multi-currency support
@@ -132,8 +142,10 @@ be confirmed before or during UI mockup review.
 - **A-5** [Updated 2026-08-21, Phase 6]: Users authenticate individually so transactions can
   be attributed to a user (Phase 3), and as of Phase 5 the system enforces the two roles
   named in §3 — Owner can create/edit/deactivate/delete Products, Suppliers, and Categories;
-  Staff can perform every inventory operation (stock-in, stock-out, adjustment) and every
-  read, the same as Owner. As of Phase 6, user management is no longer deferred: an Owner
+  Staff can perform every inventory operation and every read, the same as Owner —
+  **except** that as of Phase 12 a Staff-initiated *adjustment* is a request an Owner
+  must approve before it changes stock (an Owner's own adjustment is still immediate).
+  As of Phase 6, user management is no longer deferred: an Owner
   can create, edit, deactivate/reactivate, and reset the password of any account through the
   UI (no more direct-database role assignment), and every user can change their own password.
   Still deferred: per-permission granularity beyond the two-role split, and self-service
@@ -162,8 +174,13 @@ These affect the UI mockup and should be resolved before or during that phase.
   had a `parentId`, and nothing about building CRUD (Phase 4) changed the argument for
   staying flat: a small business's product list doesn't need subcategories. See
   `docs/phase-4-plan.md` §1.
-- **Q-6**: Should adjustments require any approval step (e.g., manager confirmation), or is
-  a recorded reason sufficient for MVP?
+- **Q-6 [Resolved 2026-09-03, Phase 12]**: Yes, in the narrow form — a **Staff-initiated**
+  adjustment is a request that an Owner approves or rejects before it changes stock; an
+  **Owner-initiated** adjustment is recorded immediately, exactly as before. Requiring an
+  Owner to approve their own adjustment would be theatre (they are the approving
+  authority). Not a general approval engine — general approval workflows stay Future (§7).
+  See `docs/phase-12-plan.md`, `business-rules.md` BR-072 (amended) and BR-085–089,
+  `requirements.md` FR-066.
 - **Q-7**: Multi-location support — confirmed out of MVP, but is it a near-term Future item
   the mockup should visually anticipate (e.g., a location field reserved for later), or
   fully ignored for now?
@@ -205,3 +222,10 @@ These affect the UI mockup and should be resolved before or during that phase.
   as open as before. Bounding the four catalogue reads (`/products`, `/suppliers`,
   `/categories`, `/users`) is explicitly out of scope and deferred with a concrete
   trigger (`docs/phase-11-plan.md` §7).
+- **[Added 2026-09-03, Phase 12]** Adjustment approval (`docs/phase-12-plan.md`,
+  `business-rules.md` BR-072 amended + BR-085–089, `requirements.md` FR-066,
+  `domain-model.md` §3–8, `api.md`). This is a product-level edit in the register of
+  Phase 9's, not Phase 7/10/11's: §4 gains no user goal but §5 gains a use case, §7's
+  Should Have gains an item and its Future list is narrowed, and §10's **Q-6 is
+  resolved**. Q-4 (sale concept) and Q-7 (multi-location) remain open, untouched since
+  Phase 5.

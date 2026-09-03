@@ -1,6 +1,7 @@
 import { ConflictException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
+import { AdjustmentRequest } from '../adjustments/adjustment-request.entity';
 import { AuditService } from '../audit/audit.service';
 import { AuditEventType } from '../common/enums/audit-event-type.enum';
 import { InventoryService } from '../inventory/inventory.service';
@@ -28,15 +29,23 @@ describe('ProductsService', () => {
   const inventoryService = {
     hasHistory: jest.fn(),
   };
+  // Phase 12 (BR-089): remove() also checks for a pending adjustment request. Default
+  // to zero here; the BR-089 test overrides it.
+  const adjustmentRepo = { count: jest.fn().mockResolvedValue(0) };
   const auditService = { record: jest.fn() };
   const ACTOR_ID = 99;
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    adjustmentRepo.count.mockResolvedValue(0);
     const moduleRef = await Test.createTestingModule({
       providers: [
         ProductsService,
         { provide: getRepositoryToken(Product), useValue: repo },
+        {
+          provide: getRepositoryToken(AdjustmentRequest),
+          useValue: adjustmentRepo,
+        },
         { provide: InventoryService, useValue: inventoryService },
         { provide: AuditService, useValue: auditService },
       ],
@@ -51,7 +60,10 @@ describe('ProductsService', () => {
   describe('create — SKU uniqueness', () => {
     it('creates the product when the SKU is not already in use', async () => {
       repo.findOne.mockResolvedValue(null);
-      await service.create({ name: 'Widget', sku: 'W-1', unit: 'each' }, ACTOR_ID);
+      await service.create(
+        { name: 'Widget', sku: 'W-1', unit: 'each' },
+        ACTOR_ID,
+      );
       expect(repo.save).toHaveBeenCalled();
     });
 
@@ -130,7 +142,11 @@ describe('ProductsService', () => {
       inventoryService.hasHistory.mockResolvedValue(true);
 
       await expect(
-        service.update(1, { name: 'Widget', unit: 'each', sku: 'W-2' }, ACTOR_ID),
+        service.update(
+          1,
+          { name: 'Widget', unit: 'each', sku: 'W-2' },
+          ACTOR_ID,
+        ),
       ).rejects.toBeInstanceOf(ConflictException);
       // Rejected before ever checking whether 'W-2' itself is free — findOne should
       // only have been called once, to fetch the product.
@@ -165,7 +181,11 @@ describe('ProductsService', () => {
       repo.findOne.mockResolvedValueOnce(existingProduct());
       inventoryService.hasHistory.mockResolvedValue(true); // even with history —
 
-      await service.update(1, { name: 'Widget Renamed', unit: 'each' }, ACTOR_ID);
+      await service.update(
+        1,
+        { name: 'Widget Renamed', unit: 'each' },
+        ACTOR_ID,
+      );
 
       expect(inventoryService.hasHistory).not.toHaveBeenCalled();
       expect(repo.save).toHaveBeenCalledWith(
@@ -215,6 +235,41 @@ describe('ProductsService', () => {
       await expect(service.remove(1, ACTOR_ID)).rejects.toBeInstanceOf(
         ConflictException,
       );
+      expect(repo.remove).not.toHaveBeenCalled();
+      expect(auditService.record).not.toHaveBeenCalled();
+    });
+
+    // BR-089 (Phase 12): a product with no transaction history but a PENDING
+    // adjustment request cannot be hard-deleted — the RESTRICT FK would otherwise
+    // surface as a 500 on a path a user can reach.
+    it('rejects the delete when a pending adjustment request exists, and records nothing', async () => {
+      repo.findOne.mockResolvedValueOnce(existingProduct());
+      inventoryService.hasHistory.mockResolvedValue(false);
+      // Both count() calls (total, then pending) see the row.
+      adjustmentRepo.count.mockResolvedValue(1);
+
+      const err = await service.remove(1, ACTOR_ID).catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.message).toMatch(/pending adjustment request/i);
+      expect(repo.remove).not.toHaveBeenCalled();
+      expect(auditService.record).not.toHaveBeenCalled();
+    });
+
+    // BR-089 (Phase 12): the FK is RESTRICT for every status, so a withdrawn or
+    // rejected request against an otherwise-history-free product also blocks the hard
+    // delete — with the "deactivate instead" wording, since a resolved request is
+    // history in the same sense BR-004 means.
+    it('rejects the delete when only a resolved (withdrawn/rejected) request exists', async () => {
+      repo.findOne.mockResolvedValueOnce(existingProduct());
+      inventoryService.hasHistory.mockResolvedValue(false);
+      // Total count sees a row; the pending count is zero.
+      adjustmentRepo.count
+        .mockResolvedValueOnce(1) // total for this product
+        .mockResolvedValueOnce(0); // pending
+
+      const err = await service.remove(1, ACTOR_ID).catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.message).toMatch(/adjustment request history/i);
       expect(repo.remove).not.toHaveBeenCalled();
       expect(auditService.record).not.toHaveBeenCalled();
     });

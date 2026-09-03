@@ -1,4 +1,5 @@
 import { DataSource } from 'typeorm';
+import { AdjustmentRequest } from '../adjustments/adjustment-request.entity';
 import { AuditEvent } from '../audit/audit-event.entity';
 import { Category } from '../categories/category.entity';
 import { InventoryTransaction } from '../inventory/inventory-transaction.entity';
@@ -30,7 +31,15 @@ export function createTestDataSource(options?: {
     username: process.env.DB_USERNAME ?? 'postgres',
     password: process.env.DB_PASSWORD ?? '',
     database: process.env.TEST_DB_DATABASE ?? 'smart_inventory_test',
-    entities: [Category, Supplier, Product, InventoryTransaction, User, AuditEvent],
+    entities: [
+      Category,
+      Supplier,
+      Product,
+      InventoryTransaction,
+      User,
+      AuditEvent,
+      AdjustmentRequest,
+    ],
     synchronize: true,
     dropSchema: true, // each test run starts from a clean schema
     ...(options?.extra ? { extra: options.extra } : {}),

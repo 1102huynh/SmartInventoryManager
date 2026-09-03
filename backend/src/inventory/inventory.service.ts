@@ -26,6 +26,16 @@ import { InventoryTransaction } from './inventory-transaction.entity';
 // @Max(500) in the two query DTOs, validation rather than a clamp.
 const DEFAULT_LIMIT = 100;
 
+// Phase 12 (docs/phase-12-plan.md §1 "The zero-delta case can arrive by drift"). The
+// one message text for "the count you entered now equals current stock, so there is
+// nothing to adjust". Shared so the immediate path and the approval path say the same
+// sentence — they differ only in the HTTP status that carries it: the immediate path
+// keeps its pre-phase 400 (a malformed request — you asked for a no-op), the approval
+// path returns 409 (a conflict with state that changed under you between request and
+// approval). See AdjustmentsService.resolve.
+export const NO_OP_ADJUSTMENT_MESSAGE =
+  'The counted quantity matches current stock — no adjustment needed.';
+
 // The internal shape both list reads return: the rows the caller asked for, plus
 // whether the database had more. The controller turns `truncated` into a response
 // header and returns `rows` — HTTP knowledge stays out of the service, and callers
@@ -247,38 +257,83 @@ export class InventoryService {
     userId: number,
   ): Promise<InventoryTransaction> {
     this.assertNotFuture(dto.occurredAt);
-    return this.dataSource.transaction(async (manager) => {
-      // Unlike stock-in/out, adjustment is intentionally allowed on an inactive
-      // product (see docs/ui-open-questions.md Q-UI-1) — a discontinued product may
-      // still need a final correcting count — so this does NOT use
-      // getLockedActiveProduct; it locks the row without checking status.
-      const product = await manager.getRepository(Product).findOne({
-        where: { id: productId },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!product)
-        throw new NotFoundException(`Product ${productId} not found.`);
-
-      const currentStock = await this.getCurrentStockLocked(
-        manager,
-        product.id,
+    try {
+      return await this.dataSource.transaction((manager) =>
+        this.applyApprovedAdjustment(manager, {
+          productId,
+          newQuantity: dto.newQuantity,
+          occurredAt: dto.occurredAt,
+          userId,
+          reason: dto.reason,
+        }),
       );
-      const delta = dto.newQuantity - currentStock;
-      if (delta === 0) {
-        throw new BadRequestException(
-          'The counted quantity matches current stock — no adjustment needed.',
-        );
+    } catch (err) {
+      // The immediate path has always answered a no-op adjustment with 400, not 409
+      // (docs/ui-open-questions.md Q-UI-2 flow) — keep that. applyApprovedAdjustment
+      // throws ConflictException for the approval path's benefit; translate just that
+      // one case back here so the Owner path is byte-identical to pre-phase.
+      if (
+        err instanceof ConflictException &&
+        err.message === NO_OP_ADJUSTMENT_MESSAGE
+      ) {
+        throw new BadRequestException(NO_OP_ADJUSTMENT_MESSAGE);
       }
+      throw err;
+    }
+  }
 
-      return this.insertTransaction(manager, {
-        productId: product.id,
-        type: TransactionType.ADJUSTMENT,
-        quantityDelta: delta,
-        occurredAt: dto.occurredAt,
-        userId,
-        supplierId: null,
-        reason: dto.reason,
-      });
+  // Phase 12 (docs/phase-12-plan.md §2). recordAdjustment's body, minus the
+  // transaction it opens: this takes an EntityManager from the caller so an
+  // AdjustmentsService approval can insert the transaction row AND flip the request to
+  // `approved` inside one database transaction — or neither. recordAdjustment above is
+  // now just "open a transaction, then call this", so the immediate path and the
+  // approved path share one implementation of the lock, the delta computation, the
+  // zero-delta check, and the insert. Two code paths that must produce identical rows
+  // should not be two pieces of code.
+  //
+  // `userId` is the acting user, passed explicitly: an approved adjustment's
+  // transaction is attributed to the REQUESTER (the person who counted the stock and
+  // typed the number), not the approver (BR-088). The approver is recorded on the
+  // request, reachable from the transaction by resulting_transaction_id.
+  //
+  // BR-052 (occurredAt not in the future) is NOT re-checked here — it was validated
+  // when the request was submitted and a past date does not become a future one. The
+  // immediate path checks it in recordAdjustment before opening its transaction.
+  async applyApprovedAdjustment(
+    manager: EntityManager,
+    params: {
+      productId: number;
+      newQuantity: number;
+      occurredAt: string | Date;
+      userId: number;
+      reason: string;
+    },
+  ): Promise<InventoryTransaction> {
+    // Unlike stock-in/out, adjustment is intentionally allowed on an inactive
+    // product (see docs/ui-open-questions.md Q-UI-1) — a discontinued product may
+    // still need a final correcting count — so this does NOT use
+    // getLockedActiveProduct; it locks the row without checking status.
+    const product = await manager.getRepository(Product).findOne({
+      where: { id: params.productId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!product)
+      throw new NotFoundException(`Product ${params.productId} not found.`);
+
+    const currentStock = await this.getCurrentStockLocked(manager, product.id);
+    const delta = params.newQuantity - currentStock;
+    if (delta === 0) {
+      throw new ConflictException(NO_OP_ADJUSTMENT_MESSAGE);
+    }
+
+    return this.insertTransaction(manager, {
+      productId: product.id,
+      type: TransactionType.ADJUSTMENT,
+      quantityDelta: delta,
+      occurredAt: params.occurredAt,
+      userId: params.userId,
+      supplierId: null,
+      reason: params.reason,
     });
   }
 
@@ -341,7 +396,7 @@ export class InventoryService {
       productId: number;
       type: TransactionType;
       quantityDelta: number;
-      occurredAt: string;
+      occurredAt: string | Date;
       userId: number;
       supplierId: number | null;
       reason: string | null;
@@ -360,7 +415,11 @@ export class InventoryService {
     return repo.save(record);
   }
 
-  private assertNotFuture(dateStr: string): void {
+  // Public since Phase 12: AdjustmentsService calls this to enforce BR-052 when a
+  // Staff member SUBMITS an adjustment request, so the check happens once — at
+  // submission — and is deliberately not repeated at approval (a past date does not
+  // become a future one; docs/phase-12-plan.md §1).
+  assertNotFuture(dateStr: string): void {
     const date = new Date(dateStr);
     const today = new Date();
     today.setHours(23, 59, 59, 999);

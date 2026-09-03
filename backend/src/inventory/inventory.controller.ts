@@ -11,18 +11,24 @@ import {
 import type { Response } from 'express';
 import { CurrentUserId } from '../common/decorators/current-user-id.decorator';
 import { RESULT_TRUNCATED_HEADER } from '../common/result-truncated.header';
-import { CreateAdjustmentDto } from './dto/create-adjustment.dto';
 import { CreateStockInDto } from './dto/create-stock-in.dto';
 import { CreateStockOutDto } from './dto/create-stock-out.dto';
 import { QueryProductTransactionsDto } from './dto/query-product-transactions.dto';
 import { QueryTransactionsDto } from './dto/query-transactions.dto';
 import { InventoryService } from './inventory.service';
 
-// Stock-in/out/adjustment are modeled as actions under a product
-// (POST /products/:id/stock-in), not as generic POST /inventory-transactions — they
-// are meaningfully different operations with different validation, not one generic
-// "create a transaction" write. Reads stay generic (GET /inventory-transactions),
-// since a filtered read genuinely is one shape reused by three screens.
+// Stock-in/out are modeled as actions under a product (POST /products/:id/stock-in),
+// not as generic POST /inventory-transactions — they are meaningfully different
+// operations with different validation, not one generic "create a transaction" write.
+// Reads stay generic (GET /inventory-transactions), since a filtered read genuinely is
+// one shape reused by three screens.
+//
+// Phase 12 (docs/phase-12-plan.md §1 "A new module, deliberately outside
+// InventoryModule"): POST /products/:id/adjustments used to live here too. It now
+// lives on AdjustmentsController — the path is unchanged (Nest routes by decorator,
+// not by module), and moving the handler is what keeps the dependency arrow correct
+// (AdjustmentsModule → InventoryModule, never the reverse). A reviewer scanning this
+// controller for the adjustment route and not finding it should read that section.
 @Controller()
 export class InventoryController {
   constructor(private readonly inventoryService: InventoryService) {}
@@ -43,15 +49,6 @@ export class InventoryController {
     @CurrentUserId() userId: number,
   ) {
     return this.inventoryService.recordStockOut(productId, dto, userId);
-  }
-
-  @Post('products/:id/adjustments')
-  recordAdjustment(
-    @Param('id', ParseIntPipe) productId: number,
-    @Body() dto: CreateAdjustmentDto,
-    @CurrentUserId() userId: number,
-  ) {
-    return this.inventoryService.recordAdjustment(productId, dto, userId);
   }
 
   // Phase 11 (docs/phase-11-plan.md §2): both reads are bounded now. The service

@@ -128,11 +128,17 @@ involved.
   editing, deactivating, or deleting a Product, Supplier, or Category requires the
   Owner role. Enforced by `RolesGuard` on the ten routes listed in `docs/api.md`. →
   FR-062, FR-001, FR-002, FR-003, FR-006, FR-010, FR-011, FR-013, FR-005
-- **BR-072** [Decided 2026-08-20, Phase 5] — **Stock movement is open to both roles.**
-  Recording a stock-in, stock-out, or adjustment requires only an authenticated user,
-  of either role. This is **not** a resolution of Q-6 (adjustment approval workflow,
-  product.md) — it is a role gate, not a workflow, and Q-6 remains open. → FR-062,
-  FR-020, FR-021, FR-022
+- **BR-072** [Decided 2026-08-20, Phase 5; amended 2026-09-03, Phase 12] —
+  **Initiating stock movement is open to both roles; a Staff-initiated adjustment does
+  not change stock without an Owner's approval.** Recording a stock-in or stock-out, and
+  *initiating* an adjustment, requires only an authenticated user of either role. As of
+  Phase 12 a Staff-initiated adjustment is a **request** that changes no stock until an
+  Owner approves it (BR-085); an Owner-initiated adjustment is still recorded
+  immediately. The original entry read "This is **not** a resolution of Q-6 … Q-6
+  remains open"; both halves now change — **Q-6 is resolved** (`product.md` §10) in the
+  narrow form BR-085 states. The amendment is written here with its date, the way BR-074
+  amended BR-073, rather than left for a reader to reconcile two rules that disagree.
+  → FR-062, FR-020, FR-021, FR-022, FR-066
 - **BR-073** [Decided 2026-08-20, Phase 5; amended 2026-08-21, Phase 6] — **Reads are
   open to both roles.** Every read — products, suppliers, categories, transactions,
   dashboard, `/auth/me` — is available to any authenticated user regardless of role,
@@ -293,10 +299,77 @@ the rows. `docs/phase-11-plan.md` §1 records why FR-030/FR-031's word "all" is 
 statement about the screen's subject, not a guarantee about one response, and
 `requirements.md`'s Phase 11 note carries that reading.
 
+## Adjustment Approval
+
+- **BR-085** [Decided 2026-09-03, Phase 12] — **A Staff-initiated adjustment is a
+  request; an Owner-initiated one is immediate.** When a Staff user submits an
+  adjustment (`POST /products/:id/adjustments`), the server creates a **pending
+  adjustment request** that changes no stock — current stock is still
+  `SUM(quantity_delta)` over `inventory_transactions` (BR-040), and a pending request
+  contributes nothing to it. When an Owner submits, the transaction is recorded
+  immediately, exactly as before this phase. A pending request lives in its own table
+  (`adjustment_requests`), never as a mutable `inventory_transactions` row — BR-051 is
+  untouched. → FR-022, FR-066, BR-072
+- **BR-086** [Decided 2026-09-03, Phase 12] — **The delta is computed at approval, not
+  at request time.** The request stores the new *counted total* (`new_quantity`,
+  Q-UI-2), never a `+/-` delta. `quantity_delta` is computed when the Owner approves,
+  against current stock **under the same pessimistic row lock `recordAdjustment`
+  already takes** (`docs/learning-notes/database-transactions.md`). A stored delta
+  would go stale if stock moved between request and approval; "the count was 40" does
+  not. If drift has made the count a no-op by approval time (current stock already
+  equals `new_quantity`), approval is rejected with `409` and the request stays
+  pending for the Owner to reject — no `superseded` status is invented for one `if`
+  branch. BR-052 is **not** re-checked at approval (a past date does not become a
+  future one). → FR-066, BR-030, BR-052
+- **BR-087** [Decided 2026-09-03, Phase 12] — **Who may do what, and terminality.**
+  Submit: any authenticated user. Approve and reject: Owner only. Withdraw: the
+  requester, and only while pending. **No self-approval** — the approver must not be
+  the requester (this arises the moment a Staff member with a pending request is
+  promoted to Owner; if they are then the only active Owner, they withdraw and
+  re-submit, which now goes through the Owner path). A resolved request is terminal:
+  no un-reject, no re-open, no edit — a superseded count is a *new* request, in the
+  spirit of BR-051. Reject and withdraw carry a **mandatory** `resolution_reason`
+  (mirrors BR-032); approve's is optional. The four statuses are `pending`,
+  `approved`, `rejected`, `withdrawn` — a withdrawal ("I changed my mind about my own
+  count") is a different fact from a rejection ("the Owner did not accept it"), the
+  same reasoning BR-082 gives for keeping actor and subject as two columns. The
+  approve/reject/withdraw gate is enforced in `AdjustmentsService`, not by
+  `@Roles()` — the first authorization rule in the app that depends on the actor's
+  relationship to the row, not only on the token
+  (`docs/learning-notes/authentication-and-guards.md`). → FR-066
+- **BR-088** [Decided 2026-09-03, Phase 12] — **An approved adjustment's transaction
+  is attributed to the requester.** `inventory_transactions.recorded_by_user_id` on
+  the row an approval inserts is the **requester** — the person who performed the
+  count and typed the number — not the approver, who permitted it (FR-061). Recording
+  the approver would make that column mean two different things depending on which
+  path a row came from, and would lose the requester from the ledger. The approver is
+  not lost: `adjustment_requests` names them, and the request is reachable from the
+  transaction by `resulting_transaction_id`. → FR-061, FR-066
+- **BR-089** [Decided 2026-09-03, Phase 12] — **A product with a pending request
+  cannot be deleted.** BR-004 blocks deleting a product with transaction history; a
+  product with no transactions but a **pending** adjustment request is otherwise
+  deletable, and the `RESTRICT` foreign key would surface as a `500`. `DELETE
+  /products/:id` gains an explicit check producing the documented `409`, extending
+  BR-004's principle to a row that is not yet history. → FR-006, FR-066, BR-004
+
+**No new `AuditEventType` was added** (Fork C, `docs/phase-12-plan.md` §1) — the
+counterpart to Phases 10 and 11's "no new BR" lines. `adjustment_requests` already
+records requester, approver, both timestamps, the outcome, and the resolution reason;
+writing the same facts into `audit_events` would be a second record of one fact that
+can drift (BR-083's own objection), and would put the app's highest-frequency workflow
+into the low-frequency table Phase 9 §1 built for administrative rarities. **Revisit
+trigger:** if the audit screen ever becomes the single place an Owner reconstructs
+"everything that happened," the answer is a read-side union across the two tables
+(Phase 9 §7's unified-activity-feed shape), never a second write.
+
 ## Rules Explicitly Deferred (Future scope, not defined now)
 
 - Pricing/cost rules (cost of goods, valuation) — depends on product.md Q-1.
 - Multi-location stock allocation rules.
 - Purchase-order-to-stock-in matching rules.
 - Batch/lot/expiry rules.
-- Approval workflow rules for adjustments (product.md Q-6).
+- **General** approval workflow rules — approval on any write other than a
+  Staff-initiated adjustment, configurable approver chains, magnitude thresholds
+  ("only adjustments over N units need approval"). Adjustment approval itself is **no
+  longer deferred** — see BR-085–089 (Phase 12, resolving product.md Q-6). What stays
+  Future is approval generalized beyond that one case (`docs/phase-12-plan.md` §7).

@@ -550,3 +550,15 @@ succeeds.
   `actor`/`subject` split), that's two facts wearing one name — name them
   separately rather than documenting the ambiguity, or a reader has no way to tell
   which meaning a given row is using.
+- **Role-based and ownership-based authorization are different mechanisms, and a
+  guard that only sees the request cannot implement the second.** Phase 12's
+  `PATCH /adjustment-requests/:id/status` is the first route in this app whose legality
+  is not fully expressible as `@Roles(...)`: withdraw is allowed only for *the
+  requester of this row*, approve/reject only for an Owner who is *not* the requester.
+  `RolesGuard` reads `request.user.role` and nothing about the row, so the rule that
+  compares the actor to a column on the target lives in `AdjustmentsService.resolve`,
+  after the row is loaded — not because the guard is the wrong place for role checks,
+  but because "the actor's relationship to this specific record" is a question a guard
+  reading only the token cannot answer. Keep the `@Roles()` gate for the part that is
+  purely role, and put the ownership comparison in the service beside the data it
+  compares against.

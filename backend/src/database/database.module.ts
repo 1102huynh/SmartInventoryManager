@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AdjustmentRequest } from '../adjustments/adjustment-request.entity';
 import { AuditEvent } from '../audit/audit-event.entity';
 import { Category } from '../categories/category.entity';
 import { InventoryTransaction } from '../inventory/inventory-transaction.entity';
@@ -33,6 +34,7 @@ import { User } from '../users/user.entity';
           InventoryTransaction,
           User,
           AuditEvent,
+          AdjustmentRequest,
         ],
         // synchronize is intentionally off — see the note in data-source.ts.
         // Schema changes only happen through reviewed migrations.

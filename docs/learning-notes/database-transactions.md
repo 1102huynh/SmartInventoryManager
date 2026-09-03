@@ -59,6 +59,31 @@ This was also verified manually against the running dev server with two real
 concurrent `curl` requests — see the phase transcript; the second request correctly
 saw the first one's committed change and was rejected with `409`.
 
+## Phase 12: one transaction spanning two modules' repositories
+
+Approving a Staff-initiated adjustment (`AdjustmentsService.resolve`) has to do two
+writes in one unit: insert an `inventory_transactions` row **and** flip the
+`adjustment_requests` row to `approved` with its `resulting_transaction_id`. A crash
+between the two would leave a stock movement nobody approved, or a request pointing at
+nothing — the exact failure the approval workflow exists to prevent, arriving through
+the back door.
+
+The mechanism is that `InventoryService.applyApprovedAdjustment(manager, ...)` takes an
+`EntityManager` **from its caller** instead of opening its own transaction the way
+`recordAdjustment` does. `resolve` opens one `dataSource.transaction`, re-reads the
+request row under a `pessimistic_write` lock (so a concurrent resolve of the same
+request waits and then sees a non-pending status → `409`), calls
+`applyApprovedAdjustment` with that same `manager`, and saves the request through it.
+Insert and flip commit together or roll back together. This is the codebase's first
+transaction that spans two modules' repositories, and the injected-`EntityManager`
+parameter is the whole trick — a method that always opens its own transaction cannot be
+composed into a larger one.
+
+`recordAdjustment` (the immediate Owner path) is now just "open a transaction, call
+`applyApprovedAdjustment`" — so the two paths share one implementation of the lock, the
+delta computation, the zero-delta check, and the insert. Two code paths that must
+produce identical rows should not be two pieces of code.
+
 ## Common Mistakes
 
 - Reading current stock in one query, then writing in a separate, unlocked query "for
@@ -82,3 +107,7 @@ saw the first one's committed change and was rejected with `409`.
 - This is the single most important piece of business logic in this phase — it's the
   concrete mechanism behind BR-041 ("current stock can never be negative").
 - Prove concurrency-sensitive logic with a real database test, not a mock.
+- A service method that needs to participate in a *caller's* transaction takes an
+  `EntityManager` parameter rather than calling `dataSource.transaction` itself — the
+  method that always opens its own transaction can't be composed into a larger unit
+  of work (Phase 12's `applyApprovedAdjustment`).

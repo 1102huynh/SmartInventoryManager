@@ -62,7 +62,7 @@ describe('Roles / authorization (e2e)', () => {
 
   beforeEach(async () => {
     await dataSource.query(
-      'TRUNCATE TABLE inventory_transactions, products, suppliers, users, categories RESTART IDENTITY CASCADE',
+      'TRUNCATE TABLE adjustment_requests, inventory_transactions, products, suppliers, users, categories RESTART IDENTITY CASCADE',
     );
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     await dataSource.query(
@@ -266,12 +266,15 @@ describe('Roles / authorization (e2e)', () => {
     expect(res.status).toBe(201);
   });
 
-  // Adjustment is the one BR-072 explicitly keeps open to Staff despite being the
-  // most "sensitive-looking" of the three transaction types (docs/phase-5-plan.md §1
-  // "Adjustments stay open to Staff and Q-6 stays open") — a regression that made it
-  // Owner-only would silently re-open Q-6 through the back door, which is exactly
-  // what that design decision argues against.
-  it('allows Staff to record an adjustment', async () => {
+  // Phase 12 (docs/phase-12-plan.md §1) AMENDS BR-072. Either role may still
+  // *initiate* an adjustment on the same route, but a Staff-initiated adjustment no
+  // longer becomes a transaction directly: it is a pending request (202 +
+  // AdjustmentRequest, no stock change) that an Owner approves or rejects. An
+  // Owner-initiated adjustment is still recorded immediately (201 + InventoryTransaction).
+  // This test was rewritten to state that new rule rather than deleted — a regression
+  // that made the route Owner-only, or that let a Staff adjustment change stock
+  // without approval, would both be caught here.
+  it('accepts a Staff adjustment as a pending request (202), and records an Owner adjustment immediately (201)', async () => {
     const product = await asOwner(
       request(app.getHttpServer()).post('/products'),
     ).send({ name: 'Widget', sku: 'W-1', unit: 'each' });
@@ -280,10 +283,26 @@ describe('Roles / authorization (e2e)', () => {
       request(app.getHttpServer()).post(`/products/${id}/stock-in`),
     ).send({ quantity: 10, occurredAt: '2026-08-01' });
 
-    const res = await asStaff(
+    const staffRes = await asStaff(
       request(app.getHttpServer()).post(`/products/${id}/adjustments`),
     ).send({ newQuantity: 8, occurredAt: '2026-08-02', reason: 'Recount' });
-    expect(res.status).toBe(201);
+    expect(staffRes.status).toBe(202);
+    expect(staffRes.body.status).toBe('pending');
+    // Stock is unchanged — the request has not been approved.
+    const afterStaff = await asStaff(
+      request(app.getHttpServer()).get(`/products/${id}`),
+    );
+    expect(afterStaff.body.currentStock).toBe(10);
+
+    const ownerRes = await asOwner(
+      request(app.getHttpServer()).post(`/products/${id}/adjustments`),
+    ).send({
+      newQuantity: 6,
+      occurredAt: '2026-08-03',
+      reason: 'Owner recount',
+    });
+    expect(ownerRes.status).toBe(201);
+    expect(ownerRes.body.quantityDelta).toBe(-4);
   });
 
   it('allows Staff to read products and the dashboard summary', async () => {

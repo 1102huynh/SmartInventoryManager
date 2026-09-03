@@ -25,6 +25,10 @@ of these — see them resolved (or left open) here, then fold the outcome back i
   (with an inline explanation); Adjustment stays enabled.
 - **Options**: (a) confirm the mockup's behavior and add it to business-rules.md as
   an explicit rule, or (b) block Adjustment too, and require reactivation first.
+- **[Noted 2026-09-03, Phase 12]** Still holds, and it holds for a Staff-initiated
+  *adjustment request* too: `AdjustmentsService.submit` does not check product status,
+  and `applyApprovedAdjustment` locks the product row without a status check — a
+  discontinued product can still have a pending request submitted and approved.
 
 ## Q-UI-2: How is an Adjustment quantity actually entered?
 
@@ -41,6 +45,14 @@ of these — see them resolved (or left open) here, then fold the outcome back i
 - **Options**: (a) confirm "new counted quantity" as the standard, or (b) also offer a
   raw "+/-" delta mode for cases where staff already know the adjustment amount and
   don't want to re-count everything.
+- **[Noted 2026-09-03, Phase 12]** The "new counted quantity" choice turned out to be
+  load-bearing for adjustment approval: because a Staff-initiated adjustment can now
+  sit as a pending request for hours or days, a stored *delta* would go stale if stock
+  moved in the meantime, while "the count was 40" stays exactly what was observed.
+  `adjustment_requests` stores `new_quantity`, and the delta is computed at approval
+  under lock (BR-086). A raw "+/-" delta mode (option b) would need a different answer
+  for the request path — recorded here so a later refactor toward it does not quietly
+  reintroduce the staleness.
 
 ## Q-UI-3: What are the actual Adjustment reason categories?
 

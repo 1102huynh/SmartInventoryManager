@@ -305,3 +305,36 @@ That this file now holds **three** preconditions of one shape — correct at thi
 project's scale, silently invalidated by growth or by a second process, never checked
 — is itself the observation: it is the pattern this codebase reaches for, not three
 coincidences.
+
+## Cross-cutting: the module seam's first real test, and a convention reused by reference (Phase 12)
+
+Phase 12 (`docs/phase-12-plan.md`) added adjustment approval: a new `AdjustmentsModule`
+with its own entity, controller, and workflow.
+
+**The module seam held.** Phase 2's Go-extraction note above names `InventoryModule`'s
+zero dependencies as the seam an extraction would use. Phase 12 is the first genuinely
+new concern to arrive since then that *could* have been dropped into `InventoryService`
+— an approval workflow is domain logic, and it needs the row lock `recordAdjustment`
+already takes. It was put in a module that **depends on** `InventoryModule` instead:
+`AdjustmentsModule → InventoryModule`, never the reverse, the same direction
+`ProductsModule` and `DashboardModule` already point. `InventoryService` gained exactly
+one new public method (`applyApprovedAdjustment`, the extracted body of
+`recordAdjustment`) and lost none; `POST /products/:id/adjustments` moved to
+`AdjustmentsController` (the path is unchanged — Nest routes by decorator). So "the
+`InventoryModule` depends on nothing" property stays literally true, and the seam is one
+data point stronger for having been tested rather than only asserted.
+
+**Phase 11's bounded-read convention was reused without re-derivation.** `GET
+/adjustment-requests` is the fifth bounded read. The bound (`@Min(1)`/`@Max(500)`,
+default 100 as a service constant), the `X-Result-Truncated` header via the shared
+`trimToLimit`, the `created_at DESC, id DESC` ordering, and — the one that would have
+been invisible to get wrong on this UTC+7 machine — the correct one of the two `?days=`
+cutoffs (`daysCutoffForInstantColumn`, because `created_at` is a real instant) were all
+applied by reference to `docs/phase-11-plan.md` §1 and the existing `/audit-events`
+code. Phase 11's implicit claim was that writing the decision down once would make the
+next list read cheap; this is the first evidence either way, and it held.
+
+**The three named unenforced preconditions above are unchanged in number by this
+phase.** Phase 12 adds a table that grows with the business forever
+(`adjustment_requests`) but bounds its one read on arrival, so it joins the log side of
+the ledger, not the "silently invalidated by growth" side.

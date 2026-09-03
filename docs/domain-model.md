@@ -39,6 +39,7 @@ the system exists to support this core.
 | Purchase Order | Not included (Future) | Procurement workflow is explicitly postponed. |
 | Warehouse / Location | Not included (Future) | Single-location assumption (A-1). |
 | Audit Event | Yes, as supporting [Added 2026-08-25, Phase 9] | Records who did what, to what, and when — for authentication and administrative writes. Owns no invariants of the core domain; the core domain (stock movement) functions identically whether or not this entity exists. See `docs/phase-9-plan.md`. |
+| Adjustment Request | Yes, as supporting [Added 2026-09-03, Phase 12] | A proposal by a Staff user to correct a product's stock, pending an Owner's approval. The core domain functions identically without it — an Owner's adjustment still records immediately, and current stock is still the sum of `inventory_transactions`. A request contributes nothing to stock until approval turns it into a transaction. Same framing Audit Event got. See `docs/phase-12-plan.md`. |
 
 ## 4. Main Entities & Responsibilities
 
@@ -72,6 +73,18 @@ a hashed password, as of Phase 3) and is responsible for authentication and for 
 attributable actor on every Inventory Transaction. Role/permission distinctions are not
 modeled yet — `role` is descriptive metadata only, not enforced (A-5).
 
+### Adjustment Request (supporting, Should Have) [Added 2026-09-03, Phase 12]
+Represents a Staff member's proposal to set a product's stock to a counted total,
+awaiting an Owner's decision. The distinction the whole feature turns on: **a request
+is a proposal about the future; a transaction is a record of the past.** Responsible
+for holding the product, the counted total (`new_quantity`, not a delta — Q-UI-2), the
+reason (BR-032), the stock the requester saw, the requester, and — once resolved — the
+status (`pending`/`approved`/`rejected`/`withdrawn`), the resolver, the resolution
+reason, and a link to the `inventory_transactions` row an approval created. A pending
+request performs no stock change; approval computes the delta against current stock
+under lock (BR-086) and records a transaction attributed to the **requester** (BR-088).
+A resolved request is terminal (BR-087). See `docs/phase-12-plan.md`.
+
 ### Audit Event (supporting, Should Have) [Added 2026-08-25, Phase 9]
 Represents a single authentication or administrative event — a login attempt, an
 account lockout, a password change, or a create/edit/status-change/delete on a User,
@@ -90,6 +103,9 @@ Product          1 ── * Inventory Transaction
 Supplier         1 ── * Inventory Transaction   (stock-in transactions only)
 Category         1 ── * Product                 (optional; a Product may have 0 or 1 Category)
 User             1 ── * Inventory Transaction    (performed by)
+Product          1 ── * Adjustment Request       [Phase 12]
+User             1 ── * Adjustment Request        (requested by / resolved by) [Phase 12]
+Adjustment Request  0..1 ── 1 Inventory Transaction  (the transaction an approval created) [Phase 12]
 ```
 
 Current stock for a Product is derived by aggregating all of its Inventory Transactions
@@ -105,7 +121,10 @@ Current stock for a Product is derived by aggregating all of its Inventory Trans
 - A Stock-In or Stock-Out transaction cannot be created against an Inactive Product. (BR-013)
 - An Adjustment transaction always carries a reason. (BR-032)
 - A Product with any existing Inventory Transaction history cannot be deleted, only
-  deactivated. (BR-004)
+  deactivated. (BR-004) A Product with a *pending* Adjustment Request also cannot be
+  deleted. (BR-089) [Phase 12]
+- A pending Adjustment Request contributes nothing to a Product's current stock — only
+  the Inventory Transaction an approval creates does. (BR-085) [Phase 12]
 
 ## 7. Domain Boundaries
 
@@ -150,6 +169,12 @@ both processes run on one machine today, and nothing checked that they did.
   `created_at` only, no `updated_at`. Having a second instance is itself a small
   piece of evidence that the immutable-table rule above was worth writing as a rule
   rather than a one-off observation about `inventory_transactions`.
+- **`adjustment_requests`** [Added 2026-09-03, Phase 12] — the **fourth mutable
+  table**, so both `created_at` and `updated_at` (`timestamptz`, per the Phase 10
+  convention — this is the first table created since that convention named a type). A
+  request's status field changes on approval/rejection/withdrawal, so unlike
+  `inventory_transactions` and `audit_events` it genuinely has something for an
+  `updated_at` to record.
 
 **`occurred_at` vs. `created_at`** — easy to conflate on `inventory_transactions`,
 the one entity that has both:

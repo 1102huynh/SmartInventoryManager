@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { AdjustmentsModule } from './adjustments/adjustments.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { CategoriesModule } from './categories/categories.module';
@@ -53,6 +54,7 @@ import { UsersModule } from './users/users.module';
     ProductsModule,
     UsersModule,
     DashboardModule,
+    AdjustmentsModule,
   ],
 })
 export class AppModule {}

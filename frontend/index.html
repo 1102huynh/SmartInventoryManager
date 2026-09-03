@@ -95,6 +95,9 @@ table{border-collapse:collapse; width:100%;}
 .nav-item svg{flex:none; width:17px; height:17px; opacity:.85;}
 .nav-item .count{margin-left:auto; font-size:.7rem; font-family:var(--font-mono); background:var(--surface-2); padding:1px 6px; border-radius:8px; color:var(--ink-muted);}
 .nav-item.active .count{background:var(--accent); color:#fff;}
+/* Phase 12: pending-approvals count on the Approvals nav item (Owners only). */
+.nav-badge{margin-left:auto; font-size:.7rem; font-weight:700; font-family:var(--font-mono); background:var(--warning-soft); color:var(--warning); padding:1px 6px; border-radius:8px; min-width:18px; text-align:center;}
+.nav-badge[hidden]{display:none;}
 .sidebar-foot{padding:14px 18px; border-top:1px solid var(--border); font-size:.75rem; color:var(--ink-faint);}
 
 .topbar{
@@ -373,6 +376,31 @@ function normalizeAuditEvent(e){
   };
 }
 
+// Phase 12 (docs/phase-12-plan.md §3): an adjustment request as the Approvals screen
+// renders it. `delta` is the server's approval-time recomputation of newQuantity minus
+// current stock — recomputed on every list load, never a value frozen at request time
+// — so the row can show "you counted 40; it now says 32; that is +8" (§1).
+function normalizeAdjustmentRequest(r){
+  const stockNow = typeof r.currentStock === 'number' ? r.currentStock : null;
+  return {
+    id: r.id,
+    productId: r.productId,
+    product: r.product || null,
+    newQuantity: r.newQuantity,
+    stockAtRequest: r.stockAtRequest,
+    currentStock: stockNow,
+    delta: stockNow === null ? null : r.newQuantity - stockNow,
+    occurredAt: r.occurredAt ? new Date(r.occurredAt) : null,
+    reason: r.reason || '',
+    status: r.status,
+    requestedBy: r.requestedBy || null,
+    resolvedBy: r.resolvedBy || null,
+    resolutionReason: r.resolutionReason || '',
+    resultingTransactionId: r.resultingTransactionId ?? null,
+    createdAt: new Date(r.createdAt),
+  };
+}
+
 const Store = {
   // Every request goes through here: it attaches the bearer token (see
   // docs/phase-3-plan.md "Token transport" — this replaces Phase 2's client-supplied
@@ -394,9 +422,17 @@ const Store = {
     }
     if (ACCESS_TOKEN) options.headers['Authorization'] = `Bearer ${ACCESS_TOKEN}`;
     const res = await fetch(API_BASE + path, options);
-    const wrap = (data) => (opts && opts.withTruncation)
-      ? { data, truncated: res.headers.get('X-Result-Truncated') === 'true' }
-      : data;
+    const wrap = (data) => {
+      // Phase 11: `withTruncation` surfaces the X-Result-Truncated header alongside
+      // the body. Phase 12: `withStatus` surfaces the HTTP status code — POST
+      // /products/:id/adjustments returns 201 (Owner, recorded) or 202 (Staff, queued
+      // for approval) with two different body shapes, and the wizard has to tell them
+      // apart. Every other caller is untouched.
+      if (opts && opts.withTruncation)
+        return { data, truncated: res.headers.get('X-Result-Truncated') === 'true' };
+      if (opts && opts.withStatus) return { data, status: res.status };
+      return data;
+    };
     if (res.status === 204) return wrap(null);
     let data = null;
     try { data = await res.json(); } catch (e) { /* empty body */ }
@@ -685,11 +721,57 @@ const Store = {
     });
     return normalizeTx(tx);
   },
+  // Phase 12 (docs/phase-12-plan.md §3): one route, two outcomes. An Owner's
+  // adjustment is recorded immediately (201, an InventoryTransaction); a Staff
+  // member's becomes a pending request (202, an AdjustmentRequest). The caller (the
+  // wizard's success step) branches on the discriminated result.
   async recordAdjustment(productId, { newQty, date, reason }){
-    const tx = await this._request('POST', `/products/${productId}/adjustments`, {
-      newQuantity: Number(newQty), occurredAt: date, reason,
+    const { data, status } = await this._request(
+      'POST', `/products/${productId}/adjustments`,
+      { newQuantity: Number(newQty), occurredAt: date, reason },
+      { withStatus: true },
+    );
+    return status === 202
+      ? { outcome: 'requested', request: normalizeAdjustmentRequest(data) }
+      : { outcome: 'recorded', transaction: normalizeTx(data) };
+  },
+
+  // Phase 12 (docs/phase-12-plan.md §3). Built like listAuditEvents — query-string
+  // assembly, one GET, one normalize pass — and returns { items, truncated } in the
+  // shape the four existing bounded reads already return (the fifth caller of the
+  // Phase 11 pattern). Server-side the read is open to both roles (BR-073); this
+  // method has no opinion about that.
+  async listAdjustmentRequests({ status, productId, days, limit } = {}){
+    const q = new URLSearchParams();
+    if (status) q.set('status', status);
+    if (productId) q.set('productId', productId);
+    if (days) q.set('days', days);
+    if (limit) q.set('limit', limit);
+    const qs = q.toString();
+    const { data, truncated } = await this._request(
+      'GET', '/adjustment-requests' + (qs ? '?' + qs : ''),
+      undefined, { withTruncation: true },
+    );
+    return { items: data.map(normalizeAdjustmentRequest), truncated };
+  },
+
+  // PATCH /adjustment-requests/:id/status — the fourth status PATCH in the app. The
+  // service enforces who may do what (approve/reject → Owner, withdraw → the
+  // requester), so this method just forwards. Approve carries the created transaction
+  // back on `resultingTransactionId`.
+  async resolveAdjustmentRequest(id, { status, reason }){
+    const r = await this._request('PATCH', `/adjustment-requests/${id}/status`, {
+      status, reason: reason || undefined,
     });
-    return normalizeTx(tx);
+    return normalizeAdjustmentRequest(r);
+  },
+
+  // The nav badge (§3 item 4). Deliberately not a dashboard tile — that would mean
+  // changing GET /dashboard/summary, which BR-062 keeps composed from FR-004/031/042
+  // and nothing else. Chrome, not dashboard data: one small bounded read.
+  async countPendingAdjustments(){
+    const { items, truncated } = await this.listAdjustmentRequests({ status: 'pending', limit: 100 });
+    return { count: items.length, more: truncated };
   },
 };
 
@@ -896,9 +978,9 @@ const AUDIT_EVENT_LABEL = {
 };
 
 function shellTemplate(section){
-  const navItem = (key, hash, label, icon) => `
+  const navItem = (key, hash, label, icon, badgeId) => `
     <a class="nav-item${section===key?' active':''}" href="${hash}">
-      ${UI.icon(icon)}<span class="label">${label}</span>
+      ${UI.icon(icon)}<span class="label">${label}</span>${badgeId ? `<span class="nav-badge" id="${badgeId}" hidden></span>` : ''}
     </a>`;
   // CURRENT_USER is set by Store.login() — renderApp() (see SECTION:ROUTER) never
   // calls into shellTemplate at all until a login has actually succeeded, so it's
@@ -916,6 +998,7 @@ function shellTemplate(section){
         ${navItem('products', '#/products', 'Products', 'products')}
         ${navItem('suppliers', '#/suppliers', 'Suppliers', 'suppliers')}
         ${navItem('history', '#/history', 'Inventory History', 'history')}
+        ${navItem('approvals', '#/approvals', 'Approvals', 'history', Auth.isOwner() ? 'nav-approvals-badge' : null)}
         ${Auth.isOwner() ? navItem('users', '#/users', 'Users', 'users') : ''}
         ${Auth.isOwner() ? navItem('audit', '#/audit', 'Audit Log', 'history') : ''}
       </nav>
@@ -985,6 +1068,10 @@ function renderApp(){
   const section = parts[0] || 'dashboard';
   root.innerHTML = shellTemplate(section);
   document.getElementById('logout-btn').addEventListener('click', () => Store.logout());
+  // Phase 12 (docs/phase-12-plan.md §3 item 4): the pending-approvals count on the
+  // Approvals nav item, for Owners. Chrome, not dashboard data — a nav badge, so it
+  // costs one bounded read here and needs no change to /dashboard/summary (BR-062).
+  if (Auth.isOwner()) updateApprovalsBadge();
   const view = document.getElementById('view');
   const crumb = document.getElementById('topbar-title');
 
@@ -1043,6 +1130,9 @@ function renderApp(){
     } else if (parts[0] === 'audit'){
       crumb.textContent = 'Audit Log';
       Views.auditLog(view, query);
+    } else if (parts[0] === 'approvals'){
+      crumb.textContent = 'Approvals';
+      Views.approvals(view, query);
     } else if (parts[0] === 'account'){
       crumb.textContent = 'My Account';
       Views.account(view);
@@ -1053,6 +1143,27 @@ function renderApp(){
     view.innerHTML = UI.errorState(err.message || 'Unexpected error rendering this screen.', 'retry-render');
   }
   window.scrollTo(0, 0);
+}
+
+// Phase 12: fetch the pending count and show it on the Approvals nav item. Best-effort
+// and silent on failure — a missing badge must never break navigation. Called on every
+// render (so it stays fresh as requests are resolved) and again by Views.approvals
+// after an approve/reject/withdraw.
+function updateApprovalsBadge(){
+  const badge = document.getElementById('nav-approvals-badge');
+  if (!badge) return;
+  Store.countPendingAdjustments()
+    .then(({ count, more }) => {
+      const el = document.getElementById('nav-approvals-badge');
+      if (!el) return;
+      if (count > 0){
+        el.textContent = more ? `${count}+` : String(count);
+        el.hidden = false;
+      } else {
+        el.hidden = true;
+      }
+    })
+    .catch(() => {});
 }
 
 /* SECTION:VIEWS */
@@ -1595,6 +1706,11 @@ Views.transactionWizard = function(container, productId, type){
   let step = 'form'; // form | review | success
   let saving = false;
   let savedTx = null;
+  // Phase 12: a Staff-initiated adjustment is a request an Owner must approve — so the
+  // review step's wording and the wizard's final panel both change. False for the Owner
+  // path and for stock-in/out. `sentForApproval` becomes true once the request is filed.
+  const adjustmentNeedsApproval = type === 'adjustment' && !Auth.isOwner();
+  let sentForApproval = false;
   const form = {
     quantity: '', newQty: '', date: todayInputValue(), supplierId: '',
     reason: '', reasonCategory: '', reasonOther: '',
@@ -1737,10 +1853,11 @@ Views.transactionWizard = function(container, productId, type){
           <div class="arrow">→</div>
           <div><div class="cell-sub">Change</div><div class="tnum ${delta>0?'qty-pos':'qty-neg'}" style="font-weight:700">${UI.fmtQty(delta, '')}</div></div>
           <div class="arrow">→</div>
-          <div><div class="cell-sub">After</div><div class="tnum" style="font-weight:700">${after} ${UI.esc(product.unit)}</div></div>
+          <div><div class="cell-sub">${adjustmentNeedsApproval ? 'If approved' : 'After'}</div><div class="tnum" style="font-weight:700">${after} ${UI.esc(product.unit)}</div></div>
         </div>
+        ${adjustmentNeedsApproval ? `<div class="inline-notice info" style="margin:4px 0 14px">${UI.icon('history')}<div>This will be sent to an Owner for approval. Stock does not change until it is approved.</div></div>` : ''}
         <div class="form-actions">
-          <button class="btn btn-primary" id="btn-confirm" ${saving ? 'disabled' : ''}>${saving ? 'Saving…' : 'Confirm & Save'}</button>
+          <button class="btn btn-primary" id="btn-confirm" ${saving ? 'disabled' : ''}>${saving ? 'Saving…' : (adjustmentNeedsApproval ? 'Submit for Approval' : 'Confirm & Save')}</button>
           <button class="btn btn-secondary" id="btn-back">Back</button>
         </div>
       </div>
@@ -1748,6 +1865,24 @@ Views.transactionWizard = function(container, productId, type){
   }
 
   function successHtml(){
+    // Phase 12 (docs/phase-12-plan.md §3 item 1): the Adjustment path now has two
+    // outcomes. A Staff member's adjustment did not change stock — it is a pending
+    // request an Owner will review — so telling them it was "recorded" would be the
+    // wrong-data-that-looks-right failure this project keeps refusing. The Owner path
+    // and stock-in/out are unchanged.
+    if (sentForApproval){
+      return `<div class="wizard-wrap">
+        <div class="success-panel">
+          <div class="icon-circle">${UI.icon('history')}</div>
+          <h3>Sent for approval</h3>
+          <p>An Owner will review this count of <strong class="tnum">${UI.esc(form.newQty)} ${UI.esc(product.unit)}</strong> for ${UI.esc(product.name)}. Stock does not change until it is approved.</p>
+          <div class="form-actions">
+            <a class="btn btn-primary" href="#/approvals">View My Requests</a>
+            <a class="btn btn-secondary" href="#/products/${product.id}">Back to Product</a>
+          </div>
+        </div>
+      </div>`;
+    }
     // product was re-fetched right after the save succeeded (see the confirm handler
     // below), so product.currentStock here is already the real post-transaction
     // total from the server — not a client-side + delta guess.
@@ -1820,26 +1955,34 @@ Views.transactionWizard = function(container, productId, type){
         // maps directly onto the three REST actions instead (POST .../stock-in,
         // .../stock-out, .../adjustments) — see Store, above.
         let call;
-        if (type === 'stock-in') call = Store.recordStockIn(product.id, { quantity: form.quantity, date: form.date, supplierId: form.supplierId });
-        else if (type === 'stock-out') call = Store.recordStockOut(product.id, { quantity: form.quantity, date: form.date, reason: form.reason });
+        if (type === 'stock-in') call = Store.recordStockIn(product.id, { quantity: form.quantity, date: form.date, supplierId: form.supplierId }).then(tx => ({ recorded: true, tx }));
+        else if (type === 'stock-out') call = Store.recordStockOut(product.id, { quantity: form.quantity, date: form.date, reason: form.reason }).then(tx => ({ recorded: true, tx }));
+        // Phase 12: recordAdjustment resolves to a discriminated result. `requested`
+        // means a Staff member's count is now a pending request that changed no stock.
         else call = Store.recordAdjustment(product.id, {
           newQty: form.newQty, date: form.date,
           reason: form.reasonCategory === 'other' ? form.reasonOther : REASON_OPTIONS.find(r => r[0] === form.reasonCategory)[1],
-        });
+        }).then(res => res.outcome === 'requested' ? { recorded: false } : { recorded: true, tx: res.transaction });
         call
-          // Re-fetch the product so successHtml's "now at N units" reflects the
-          // server's authoritative post-transaction stock, not a client-side guess.
-          .then(tx => Store.getProduct(product.id).then(p => { product = p; return tx; }))
-          .then(tx => {
-            savedTx = tx; saving = false; step = 'success';
-            UI.toast(`${TITLES[type]} recorded for ${product.name}.`, 'success');
+          .then(async out => {
+            if (out.recorded){
+              // Re-fetch the product so successHtml's "now at N units" reflects the
+              // server's authoritative post-transaction stock, not a client-side guess.
+              product = await Store.getProduct(product.id);
+              savedTx = out.tx;
+              UI.toast(`${TITLES[type]} recorded for ${product.name}.`, 'success');
+            } else {
+              sentForApproval = true;
+              UI.toast(`Adjustment sent to an Owner for approval.`, 'success');
+            }
+            saving = false; step = 'success';
             render();
           }).catch(err => { saving = false; UI.toast(err.message, 'error'); render(); });
       });
     } else {
       const again = container.querySelector('#btn-again');
       if (again) again.addEventListener('click', () => {
-        step = 'form'; savedTx = null; errors = {};
+        step = 'form'; savedTx = null; sentForApproval = false; errors = {};
         form.quantity = ''; form.newQty = ''; form.date = todayInputValue();
         form.supplierId = ''; form.reason = ''; form.reasonCategory = ''; form.reasonOther = '';
         render();
@@ -2491,6 +2634,191 @@ Views.auditLog = function(container, query){
   function attachAll(){
     attachHeaderHandlers();
     const retry = container.querySelector('#retry'); if (retry) retry.addEventListener('click', () => { override = 'normal'; load(); });
+  }
+
+  load();
+};
+
+// -------------------------------------------------------------- Approvals --
+// Phase 12 (docs/phase-12-plan.md §3). Modeled on Views.auditLog — a filtered,
+// newest-first table with a toolbar of <select>s — since a stream of requests that
+// grows with the business is the same shape as a log. NOT gated by isOwnerOnlyRoute
+// in renderApp(): BR-073 keeps reads open to both roles, and a Staff member who
+// submitted a count needs to see whether it was accepted — so the nav item shows for
+// both roles too (only the pending-count badge on it is Owner-only). Owners see
+// Approve/Reject row actions and the whole queue; Staff see a read-only list scoped to
+// their own requests (AdjustmentsService.list scopes it server-side by the caller's
+// id), plus Withdraw on their own pending rows — the first screen visible to both
+// roles with a different action set (the Products screen already establishes that
+// pattern at the button level, Phase 5).
+//
+// "Delta as of now" is recomputed by the server on every list load and never a value
+// frozen at request time (§1) — approving still recomputes it a final time under lock.
+Views.approvals = function(container, query){
+  let status = (query && query.get('status')) || 'pending';
+  let productId = (query && query.get('productId')) || '';
+  let days = '';
+  let override = 'normal';
+  // { id, kind: 'reject'|'withdraw' } — the row currently showing an inline reason
+  // prompt. Mandatory reason (§1), so there is a prompt rather than a bare button.
+  let promptFor = null;
+
+  const isOwner = Auth.isOwner();
+  const myId = CURRENT_USER ? CURRENT_USER.id : null;
+
+  const STATUS_LABEL = { pending: 'Pending', approved: 'Approved', rejected: 'Rejected', withdrawn: 'Withdrawn' };
+
+  function ageText(d){
+    const mins = Math.max(0, Math.round((Date.now() - d.getTime()) / 60000));
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    return `${Math.round(hrs / 24)}d ago`;
+  }
+
+  function load(){
+    container.innerHTML = header() + toolbar() + `<div class="table-wrap"><table class="data-table"><tbody>${UI.skeletonRows(9,6)}</tbody></table></div>`;
+    attachHeaderHandlers();
+    UI.mockFetch(async () => {
+      if (override === 'empty') return { items: [], truncated: false };
+      return Store.listAdjustmentRequests({
+        status: status || undefined,
+        productId: productId || undefined,
+        days: days ? Number(days) : undefined,
+      });
+    }, { forceState: override === 'error' ? 'error' : null })
+      .then(result => { container.innerHTML = header() + toolbar() + body(result.items, result.truncated); attachAll(); })
+      .catch(err => { container.innerHTML = header() + toolbar() + UI.errorState(err.message, 'retry'); attachAll(); });
+  }
+
+  function header(){
+    return `<div class="content-header"><div><h1>Approvals</h1><div class="sub">${isOwner
+      ? 'Stocktake corrections submitted by staff. Approving one records the adjustment; rejecting one does not.'
+      : 'Adjustments you submitted. Stock changes only once an Owner approves the count.'}</div></div></div>`;
+  }
+
+  function toolbar(){
+    return `<div class="toolbar">
+      <select class="select-filter" id="ap-status">
+        ${Object.entries(STATUS_LABEL).map(([v,l]) => `<option value="${v}" ${status===v?'selected':''}>${l}</option>`).join('')}
+        <option value="" ${status===''?'selected':''}>All</option>
+      </select>
+      <select class="select-filter" id="ap-days">
+        <option value="">All time</option>
+        <option value="7" ${days==='7'?'selected':''}>Last 7 days</option>
+        <option value="30" ${days==='30'?'selected':''}>Last 30 days</option>
+        <option value="90" ${days==='90'?'selected':''}>Last 90 days</option>
+      </select>
+      ${productId ? `<button type="button" class="btn btn-ghost btn-sm" id="ap-clear-product">Filtered to one product &times;</button>` : ''}
+      ${UI.previewControl(override)}
+    </div>`;
+  }
+
+  function body(list, truncated){
+    if (list.length === 0){
+      return UI.emptyState(
+        override === 'empty' ? 'Nothing to approve' : 'No matching requests',
+        override === 'empty'
+          ? 'When a staff member records an adjustment, it appears here for review.'
+          : 'Try a different status or time range.',
+      );
+    }
+    const notice = truncated
+      ? UI.truncationNotice(list.length, 'requests', 'Filter by status, product, or time range to see more.')
+      : '';
+    return notice + `<div class="table-wrap"><table class="data-table">
+      <thead><tr><th>Submitted</th><th>Product</th><th>Counted</th><th>Requester saw</th><th>Now</th><th>Change if approved</th><th>Requester</th><th>Status</th><th></th></tr></thead>
+      <tbody>${list.map(rowHtml).join('')}</tbody>
+    </table></div>`;
+  }
+
+  function rowHtml(r){
+    const unit = r.product ? r.product.unit : '';
+    const deltaCell = r.status === 'pending' && r.delta !== null
+      ? `<span class="tnum ${r.delta > 0 ? 'qty-pos' : (r.delta < 0 ? 'qty-neg' : '')}">${UI.fmtQty(r.delta, unit)}</span>`
+      : '<span class="cell-sub">—</span>';
+    const nowCell = r.status === 'pending' && r.currentStock !== null
+      ? `<span class="tnum">${r.currentStock} ${UI.esc(unit)}</span>`
+      : '<span class="cell-sub">—</span>';
+    const statusCell = r.status === 'pending'
+      ? '<span class="badge badge-low">Pending</span>'
+      : `<span class="badge ${r.status === 'approved' ? 'badge-active' : 'badge-inactive'}">${STATUS_LABEL[r.status]}</span>`
+        + (r.resolvedBy ? `<div class="cell-sub">by ${UI.esc(r.resolvedBy.name)}</div>` : '')
+        + (r.resolutionReason ? `<div class="cell-sub">“${UI.esc(r.resolutionReason)}”</div>` : '');
+
+    let actionCell = '';
+    if (r.status === 'pending'){
+      if (promptFor && promptFor.id === r.id){
+        const verb = promptFor.kind === 'reject' ? 'Reject' : 'Withdraw';
+        actionCell = `<div class="confirm-inline">
+          <input type="text" class="ap-reason-input" data-id="${r.id}" placeholder="Reason (required)" style="min-width:160px">
+          <button class="btn btn-primary btn-sm ap-reason-confirm" data-id="${r.id}" data-kind="${promptFor.kind}">${verb}</button>
+          <button class="btn btn-ghost btn-sm ap-reason-cancel">Cancel</button>
+        </div>`;
+      } else if (isOwner){
+        actionCell = `<div class="row-actions">
+          <button class="btn btn-primary btn-sm ap-approve" data-id="${r.id}">Approve</button>
+          <button class="btn btn-secondary btn-sm ap-reject" data-id="${r.id}">Reject</button>
+        </div>`;
+      } else if (myId && r.requestedBy && r.requestedBy.id === myId){
+        actionCell = `<button class="btn btn-secondary btn-sm ap-withdraw" data-id="${r.id}">Withdraw</button>`;
+      }
+    } else if (r.status === 'approved' && r.resultingTransactionId){
+      // The product detail page carries a transaction-history panel; the just-approved
+      // adjustment is at the top of it. (#/history has no productId query filter.)
+      actionCell = `<a class="btn btn-ghost btn-sm" href="#/products/${r.productId}">View movement</a>`;
+    }
+
+    return `<tr>
+      <td class="cell-sub">${ageText(r.createdAt)}<div class="cell-sub">${UI.fmtDate(r.createdAt)}</div></td>
+      <td>${r.product ? `<a href="#/products/${r.productId}">${UI.esc(r.product.name)}</a>` : `#${r.productId}`}</td>
+      <td class="tnum">${r.newQuantity} ${UI.esc(unit)}</td>
+      <td class="cell-sub tnum">${r.stockAtRequest} ${UI.esc(unit)}</td>
+      <td>${nowCell}</td>
+      <td>${deltaCell}</td>
+      <td class="cell-sub">${r.requestedBy ? UI.esc(r.requestedBy.name) : '—'}</td>
+      <td>${statusCell}</td>
+      <td>${actionCell}</td>
+    </tr>`;
+  }
+
+  function resolve(id, body){
+    Store.resolveAdjustmentRequest(id, body)
+      .then(() => {
+        promptFor = null;
+        UI.toast(
+          body.status === 'approved' ? 'Adjustment approved — stock updated.'
+          : body.status === 'rejected' ? 'Request rejected.'
+          : 'Request withdrawn.',
+          'success',
+        );
+        updateApprovalsBadge();
+        load();
+      })
+      .catch(err => { UI.toast(err.message, 'error'); promptFor = null; load(); });
+  }
+
+  function attachHeaderHandlers(){
+    const s = container.querySelector('#ap-status'); if (s) s.addEventListener('change', e => { status = e.target.value; promptFor = null; load(); });
+    const d = container.querySelector('#ap-days'); if (d) d.addEventListener('change', e => { days = e.target.value; load(); });
+    const cp = container.querySelector('#ap-clear-product'); if (cp) cp.addEventListener('click', () => { productId = ''; load(); });
+    const pr = container.querySelector('#preview-select'); if (pr) pr.addEventListener('change', e => { override = e.target.value; load(); });
+  }
+
+  function attachAll(){
+    attachHeaderHandlers();
+    const retry = container.querySelector('#retry'); if (retry) retry.addEventListener('click', () => { override = 'normal'; load(); });
+    container.querySelectorAll('.ap-approve').forEach(b => b.addEventListener('click', () => resolve(Number(b.dataset.id), { status: 'approved' })));
+    container.querySelectorAll('.ap-reject').forEach(b => b.addEventListener('click', () => { promptFor = { id: Number(b.dataset.id), kind: 'reject' }; load(); }));
+    container.querySelectorAll('.ap-withdraw').forEach(b => b.addEventListener('click', () => { promptFor = { id: Number(b.dataset.id), kind: 'withdraw' }; load(); }));
+    container.querySelectorAll('.ap-reason-cancel').forEach(b => b.addEventListener('click', () => { promptFor = null; load(); }));
+    container.querySelectorAll('.ap-reason-confirm').forEach(b => b.addEventListener('click', () => {
+      const input = container.querySelector(`.ap-reason-input[data-id="${b.dataset.id}"]`);
+      const reason = input ? input.value.trim() : '';
+      if (!reason){ if (input){ input.classList.add('has-error'); input.focus(); } return; }
+      resolve(Number(b.dataset.id), { status: b.dataset.kind === 'reject' ? 'rejected' : 'withdrawn', reason });
+    }));
+    const firstInput = container.querySelector('.ap-reason-input'); if (firstInput) firstInput.focus();
   }
 
   load();

@@ -1,6 +1,6 @@
-# API Documentation — Phase 11
+# API Documentation — Phase 12
 
-Status: Phase 11 — Bounded Reads
+Status: Phase 12 — Adjustment Approval
 Base URL: `http://localhost:3000` (see `backend/.env.example`)
 
 Every resource response includes `createdAt` (an ISO timestamp, server-set, never
@@ -63,15 +63,24 @@ configurable (`backend/.env.example`).
 change — no route below gains a new field, status code, or error shape because of it;
 see the "Audit Log" section for the one new route this phase actually adds.
 
+**Phase 12 (`docs/phase-12-plan.md`): a Staff-initiated adjustment is a request an
+Owner approves.** `POST /products/:id/adjustments` now returns `201` + an
+`InventoryTransaction` for an Owner (unchanged) or `202` + an `AdjustmentRequest` for a
+Staff caller (new — the stock does not change until approval). Two new routes,
+`GET /adjustment-requests` and `PATCH /adjustment-requests/:id/status`, back the
+`#/approvals` screen. See the "Adjustment Requests" section. `inventory_transactions`
+gains no column, constraint, or index — the Phase 11 reads are byte-for-byte unchanged.
+
 **Phase 11 (`docs/phase-11-plan.md`): the two transaction log reads are capped.**
 `GET /inventory-transactions` and `GET /products/:id/transactions` now accept `limit`
 (default 100, max 500; `1 <= limit <= 500` or `400`, never a silent clamp) and return
 at most that many rows, newest-first, with no offset pagination — the same shape
 `/audit-events` has carried since Phase 9. When more rows matched than were returned,
 the response carries **`X-Result-Truncated: true`**; the header is *absent* otherwise,
-so its presence is the signal, not its value. It appears on exactly those three routes
-(`/inventory-transactions`, `/products/:id/transactions`, `/audit-events`) and no
-others. The four catalogue reads (`/products`, `/suppliers`, `/categories`, `/users`)
+so its presence is the signal, not its value. As of Phase 12 it appears on **four**
+routes — `/inventory-transactions`, `/products/:id/transactions`, `/audit-events`, and
+`/adjustment-requests` (below) — and no others. The four catalogue reads (`/products`,
+`/suppliers`, `/categories`, `/users`)
 are deliberately **not** capped — a truncated catalogue is a wrong answer where a
 truncated log is a reading position; bounding them needs a paging design, deferred
 (`docs/phase-11-plan.md` §7).
@@ -116,17 +125,50 @@ truncated log is a reading position; bounding them needs a paging design, deferr
 
 ## Inventory (writes — under a product)
 
-Open to any authenticated user, either role (BR-072) — deliberately not Owner-only;
-see `docs/phase-5-plan.md` §1 "Adjustments stay open to Staff".
+Open to any authenticated user, either role (BR-072). Stock-in and stock-out are
+unchanged. `POST /products/:id/adjustments` is handled by `AdjustmentsController` as of
+Phase 12 (the path is unchanged — Nest routes by decorator, not by module) and has two
+outcomes:
 
-| Method | Path | Body | Notes |
-|---|---|---|---|
-| POST | `/products/:id/stock-in` | `{ quantity, occurredAt, supplierId? }` | 409 if product inactive or supplier inactive/missing |
-| POST | `/products/:id/stock-out` | `{ quantity, occurredAt, reason? }` | 409 if product inactive or `quantity` exceeds current stock |
-| POST | `/products/:id/adjustments` | `{ newQuantity, occurredAt, reason }` | Allowed even if product is inactive; 400 if `newQuantity` equals current stock (no-op) |
+| Method | Path | Body | Caller | Response | Notes |
+|---|---|---|---|---|---|
+| POST | `/products/:id/stock-in` | `{ quantity, occurredAt, supplierId? }` | either | `201` + `InventoryTransaction` | 409 if product inactive or supplier inactive/missing |
+| POST | `/products/:id/stock-out` | `{ quantity, occurredAt, reason? }` | either | `201` + `InventoryTransaction` | 409 if product inactive or `quantity` exceeds current stock |
+| POST | `/products/:id/adjustments` | `{ newQuantity, occurredAt, reason }` | **Owner** | `201` + `InventoryTransaction` | Recorded immediately (unchanged). Allowed even if product inactive; `400` if `newQuantity` equals current stock (no-op) |
+| POST | `/products/:id/adjustments` | `{ newQuantity, occurredAt, reason }` | **Staff** | `202` + `AdjustmentRequest` | A pending request — **stock does not change**. `404` if the product is missing; `400` if `occurredAt` is in the future |
 
 `quantity`/`newQuantity` must be whole numbers (`newQuantity >= 0`, `quantity >= 1`).
 `occurredAt` is an ISO date string and cannot be in the future.
+
+## Adjustment Requests (Phase 12)
+
+Open to both roles for reading (BR-073) — a Staff member who submitted a count needs to
+see whether it was accepted. **An Owner's `GET /adjustment-requests` returns the whole
+queue; a Staff caller's is scoped server-side to their own requests** (by the
+authenticated id, not a client-supplied `requestedByUserId` param, so it cannot be
+widened). The approve/reject/withdraw gate on the PATCH is enforced in the service, not
+by `@Roles()`, because legality depends on the actor's relationship to the row
+(approve/reject → Owner; withdraw → the requester) — the first route in the app whose
+authorization is not fully expressible as `@Roles(...)`.
+
+| Method | Path | Body / Query | Notes |
+|---|---|---|---|
+| GET | `/adjustment-requests` | `?status=pending\|approved\|rejected\|withdrawn&productId=&days=&limit=` | Newest-first (`created_at DESC, id DESC`), capped — `limit` default 100, max 500 (`400`, never a silent clamp); `days >= 1`. `X-Result-Truncated: true` when more matched, absent otherwise. Each item also carries a computed `currentStock` and `delta` (`newQuantity - currentStock`) recomputed on every load — a *preview* of what an approval right now would do, not a promise. |
+| PATCH | `/adjustment-requests/:id/status` | `{ status: "approved"\|"rejected"\|"withdrawn", reason? }` | `404` unknown; `409` if the request is not pending (a resolved request is terminal); `403` on self-approval, on a non-Owner approving/rejecting, or on a non-requester withdrawing; `400` if `reason` is missing on a reject or withdraw; `409` with the count-now-matches message if drift has made the count a no-op. On approve: inserts an `inventory_transactions` row **attributed to the requester** (BR-088) in the same database transaction as the status flip, and the response carries the request with its `resultingTransaction` populated. |
+
+`?days=N` on `/adjustment-requests` carries the same calendar contract as
+`/inventory-transactions` and `/audit-events` — exactly `N` calendar dates ending with
+today. `created_at` is a real instant (like `/audit-events`, unlike
+`/inventory-transactions`' date-only `occurred_at`), so it reaches that contract by the
+instant-column cutoff — see `backend/src/common/days-cutoff.ts`.
+
+`AdjustmentRequest` response shape: `{ id, productId, product, newQuantity, occurredAt,
+reason, status, requestedByUserId, requestedBy: User, stockAtRequest, resolvedByUserId,
+resolvedBy: User|null, resolutionReason: string|null, resultingTransactionId:
+number|null, resultingTransaction: InventoryTransaction|null (only on the PATCH
+response), currentStock, delta, createdAt, updatedAt }`. `adjustment_requests` is the
+fourth mutable table, so it carries `updatedAt` (contrast `inventory_transactions` and
+`audit_events`).
 
 ## Inventory (reads)
 

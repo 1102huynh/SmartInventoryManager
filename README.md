@@ -13,7 +13,9 @@ explained against this project's real code.
 docs/            Product, requirements, business rules, domain model, API docs, learning notes
 tools/           Portable local PostgreSQL (see tools/README.md) — dev database
 backend/         NestJS API (Phase 2)
-frontend/        Static HTML/JS UI, talks to the backend over HTTP (Phase 2)
+frontend/        Static UI — index.html shell + styles.css + a graph of ES modules
+                 (config/session/reference-data/ui/api/router/main + views/), served
+                 by serve.js. No framework, no build step (Phase 13)
 ```
 
 ## Running it locally
@@ -98,7 +100,9 @@ cd frontend
 node serve.js
 ```
 
-Open `http://localhost:5173`.
+Open `http://localhost:5173`. **Running the frontend did not change in Phase 13** —
+`serve.js` is byte-for-byte the same, it just serves several static files now instead
+of one. No `npm install`, no build, no `node_modules` under `frontend/`.
 
 ## Tests
 
@@ -112,7 +116,24 @@ See `docs/learning-notes/testing-strategy.md` for what each of these actually pr
 
 ## Current phase
 
-Phase 12 — Adjustment approval (`docs/phase-12-plan.md`): resolves `product.md` Q-6,
+Phase 13 — Frontend restructuring (`docs/phase-13-plan.md`): a **pure frontend
+restructuring, no behaviour change, no new dependency**. `frontend/index.html` was a
+3,061-line single file — a 284-line `<style>` block and one `<script>` holding the
+config layer, the API client, the render helpers, the router, and sixteen views. It
+is now a ~14-line shell that links `styles.css` and loads
+`<script type="module" src="main.js">`, plus a graph of small ES modules
+(`config`, `session`, `reference-data`, `ui`, `api`, `router`, `main`, and nine
+`views/*.js` grouped by resource, mirroring the backend modules). Native ES modules
+only — no framework, no bundler, no build step, no `node_modules`. `serve.js` is
+**byte-for-byte unchanged** and serves the module graph as-is. Shared in-memory state
+(`CURRENT_USER`/`ACCESS_TOKEN`/`CATEGORIES`) moved into `session.js` /
+`reference-data.js` behind accessor functions, since an imported binding can't be
+reassigned across modules. No domain document changed — no new FR, BR, entity, route,
+or response. See `docs/architecture-observations.md` for the two decisions a future
+reader will re-litigate (native modules over a bundler, on `serve.js`'s own grounds;
+decomposing the frontend by the same resources as the backend).
+
+Earlier phases: Phase 12 — Adjustment approval (`docs/phase-12-plan.md`): resolves `product.md` Q-6,
 open by name since Phase 5. A **Staff-initiated** adjustment is now a *request* an Owner
 approves or rejects at `#/approvals` before it changes stock; an **Owner-initiated**
 adjustment is recorded immediately, exactly as before. `POST /products/:id/adjustments`

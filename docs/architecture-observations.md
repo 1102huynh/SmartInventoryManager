@@ -338,3 +338,76 @@ next list read cheap; this is the first evidence either way, and it held.
 phase.** Phase 12 adds a table that grows with the business forever
 (`adjustment_requests`) but bounds its one read on arrival, so it joins the log side of
 the ledger, not the "silently invalidated by growth" side.
+
+## Cross-cutting: the frontend's first structural phase (Phase 13)
+
+Phase 13 (`docs/phase-13-plan.md`) split `frontend/index.html` — a 3,061-line single
+file: a 284-line `<style>` block and one `<script>` holding a config layer, `Auth`,
+the `Store` API client, the `UI` helpers, the router, and sixteen `Views.*` functions
+— into `styles.css` plus a graph of small ES modules (`config`, `session`,
+`reference-data`, `ui`, `api`, `router`, `main`, and nine `views/*.js` grouped by
+resource). **No behaviour changed**; the correctness criterion was that the app after
+the split is the app before it.
+
+**The observation worth recording is why one file was right and then wasn't — two
+different facts about the same file.** `frontend/index.html` was written in Phase 1 as
+a *navigable mockup*, and for a throwaway that existed to validate workflows against
+`product.md` before any server existed, one file was exactly right. It was never
+rewritten; instead ten consecutive backend phases (3, 5, 6, 9, 11, 12) each reached
+into it and added a screen or a gate, and the mockup silently became the product. The
+project noticed the second fact only when a phase was finally *about* the frontend —
+the same shape as this file's other entries, where a stated reason (Phase 9's cap on
+`/audit-events`; the plain-`TIMESTAMP` convention) was doing less work than the real
+one until something forced a closer look. The frontend's structure had been invisible
+because no phase had ever been about it.
+
+**Two decisions a future reader will re-litigate:**
+
+- **Native ES modules over a bundler, on `serve.js`'s own stated grounds.**
+  `serve.js`'s comment is the project's frontend creed — the frontend needs a real
+  HTTP origin but *not* a framework or a toolchain, "just enough to serve
+  `index.html` over HTTP." A bundler would delete that reason to exist and replace it
+  with the exact class of thing it was written to avoid (a build step, a dependency
+  tree, a config surface), to solve a problem browsers solved natively years ago.
+  **The concrete trigger that would flip this** (`docs/phase-13-plan.md` §7): the
+  first time this frontend is deployed over a real network where the native-module
+  request waterfall measurably hurts first paint — then a bundler is a
+  deployment-time optimisation of an already-modular codebase, which is the state
+  this phase leaves it in. A framework (React/Vue/Svelte) was rejected outright: it
+  is a rewrite, not a restructuring, and its own multi-phase project if ever wanted.
+- **The frontend now decomposes by the same resources the backend does.** Nine view
+  files — `products.js`, `suppliers.js`, `users.js`, `transactions.js`, `audit.js`,
+  `approvals.js`, … — each mapping to a nav section and to a backend module
+  (`ProductsModule`, `AdjustmentsModule`…). "One file per view" (sixteen files) was
+  declined as the frontend equivalent of a per-method file. A reader who knows the
+  backend's shape now knows where a screen lives.
+
+**`serve.js` was byte-for-byte unchanged.** A reader will check whether a file split
+forced a server change; it did not, because static files are static files — its
+`path.join(ROOT, …)` plus the `../` guard serves `/views/products.js` with no edit.
+That the server written to "serve one HTML file" serves a module graph untouched is
+itself evidence the split respects the frontend's existing shape rather than fighting
+it.
+
+**Shared mutable state across module boundaries** (`session.js`, `reference-data.js`)
+is the one place the single-file design was doing something that did not survive the
+split unchanged: `CURRENT_USER` / `ACCESS_TOKEN` / `CATEGORIES` were module-level
+`let`s one function mutated and another read. An imported binding is a live,
+read-only view, so the naïve "move the `let`, import it everywhere" breaks loudly for
+the writers. The fix is accessor functions (`getCurrentUser`/`setCurrentUser`/
+`clearSession`, `getCategory`/`setCategories`), not a shared mutable object — the
+latter re-creates unrestricted mutation of shared state, now invisible across a file
+boundary instead of visible within one. The writers are greppable: `setCurrentUser`
+has two callers (`Store.login`, `Store.logout`, plus the 401 path's `clearSession`),
+the same reason BR-082 keeps `actor` and `subject` as two explicit columns.
+
+**No automated frontend test was added.** The frontend has no test runner, no jsdom,
+no Playwright — by the same minimalism that kept it one file — and this phase did not
+add one: that is real dependency and tooling cost (the thing a bundler was rejected
+for), it is not this phase's subject, and bolting it on here would entangle "did the
+split preserve behaviour" with "does the new harness work." Verification was a manual
+smoke walk against a byte-identical pre-split baseline plus two mechanical invariants
+(the inline-handler grep stays at zero; the console stays clean). **The trigger**
+(`docs/phase-13-plan.md` §7): the first phase that adds genuinely new frontend
+*logic* rather than relocating existing logic should add the harness to cover its own
+new behaviour.

@@ -13,7 +13,11 @@ import { AuditEventType } from '../common/enums/audit-event-type.enum';
 import { EntityStatus } from '../common/enums/entity-status.enum';
 import { InventoryService } from '../inventory/inventory.service';
 import { Paged, pageEnvelope, resolvePaging } from '../common/pagination';
-import { InventoryTransaction } from '../inventory/inventory-transaction.entity';
+import {
+  CURRENT_STOCK_EXPR,
+  STOCK_AGG_ALIAS,
+  joinCurrentStock,
+} from '../inventory/stock-aggregate.query';
 import { CreateProductDto } from './dto/create-product.dto';
 import { QueryProductsDto } from './dto/query-products.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -65,23 +69,18 @@ export class ProductsService {
     // the old post-fetch `.filter()` would have taken 50 products by name and *then*
     // filtered (Phase 11 §1's failure mode). This runs whether or not paging is
     // active — one code path, a strict improvement even for the unpaged callers.
-    const qb = this.productsRepository
-      .createQueryBuilder('product')
-      .leftJoin(
-        (sub) =>
-          sub
-            .select('tx.product_id', 'product_id')
-            .addSelect('SUM(tx.quantity_delta)', 'stock')
-            .from(InventoryTransaction, 'tx')
-            .groupBy('tx.product_id'),
-        'stock_agg',
-        'stock_agg.product_id = product.id',
-      )
-      .addSelect('COALESCE(stock_agg.stock, 0)', 'currentStock')
+    //
+    // Phase 19 (docs/phase-19-plan.md §1): the stock-aggregate join moved to a
+    // shared helper so `DashboardService.getSummary` runs the identical query. The
+    // `hasHistory` select and the low/out filters below are ProductsService's own —
+    // they build on top of the helper's aggregate.
+    const qb = joinCurrentStock(
+      this.productsRepository.createQueryBuilder('product'),
+    )
       // A GROUP BY row exists for a product iff it has at least one transaction — so
       // "the join matched" *is* hasHistory, including for a product whose deltas
       // happen to sum to zero.
-      .addSelect('stock_agg.product_id IS NOT NULL', 'hasHistory')
+      .addSelect(`${STOCK_AGG_ALIAS}.product_id IS NOT NULL`, 'hasHistory')
       .orderBy('product.name', 'ASC');
     if (query.status === 'active')
       qb.andWhere('product.status = :status', { status: EntityStatus.ACTIVE });
@@ -104,10 +103,9 @@ export class ProductsService {
     // BR-060/061's "null means never flagged".
     if (query.status === 'low')
       qb.andWhere(
-        'product.low_stock_threshold IS NOT NULL AND COALESCE(stock_agg.stock, 0) <= product.low_stock_threshold',
+        `product.low_stock_threshold IS NOT NULL AND ${CURRENT_STOCK_EXPR} <= product.low_stock_threshold`,
       );
-    if (query.status === 'out')
-      qb.andWhere('COALESCE(stock_agg.stock, 0) <= 0');
+    if (query.status === 'out') qb.andWhere(`${CURRENT_STOCK_EXPR} <= 0`);
 
     const paging = resolvePaging(query);
     if (!paging) {

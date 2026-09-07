@@ -179,9 +179,25 @@ See `docs/learning-notes/ci-and-environments.md`.
 
 ## Current phase
 
-Phase 18 — Structured stock-out reason categories (`docs/phase-18-plan.md`): resolves
-`product.md` Q-4, open since Phase 5. A stock-out can now carry an **optional** reason
-category from a fixed set — `sale`, `internal_use`, `damaged`, `lost`, `expired`,
+Phase 19 — Dashboard stock counts in one query (`docs/phase-19-plan.md`, issue #9):
+`DashboardService.getSummary` used to read the whole product catalogue with
+`productsRepository.find()` and then make a **second** trip to sum every product's
+transactions (`getCurrentStockMap`) before it could count the low / out-of-stock ones.
+It now does both in **one** query — the grouped-subquery stock join Phase 14 introduced
+for the Product List, extracted into a shared `joinCurrentStock` helper that
+`ProductsService.findAll` also calls. The `GET /dashboard/summary` response is
+**byte-for-byte identical** — same keys, same values — so the whole e2e suite passes
+unedited; that is the proof nothing changed. **No migration** (unlike Phase 18), no
+domain-document change: a ninth "no new FR" note, a "no new BR" line reaffirming
+BR-040/042 ("current stock is `SUM(quantity_delta)`, never stored"). `serve.js`
+unchanged; the frontend still needs no `npm install`. See
+`docs/architecture-observations.md`'s Phase 19 section for why this join got extracted
+rather than copied a third time, and the one invisible behaviour change (`needsAttention`
+is now name-ordered).
+
+Earlier phases: Phase 18 — Structured stock-out reason categories (`docs/phase-18-plan.md`):
+resolves `product.md` Q-4, open since Phase 5. A stock-out can now carry an **optional**
+reason category from a fixed set — `sale`, `internal_use`, `damaged`, `lost`, `expired`,
 `return`, `other` — stored as a real `reason_category` enum column on
 `inventory_transactions` (so it can be filtered and reported on, not just typed into a
 note). `other` requires the free-text note. The stock-out wizard gets a picker; the
@@ -191,9 +207,8 @@ stays Future. FR-021 is unchanged — a stock-out with no category is still vali
 every pre-Phase-18 row and API caller keeps working (the column is nullable, no
 default, **no backfill**). One new **FR-025** (Should) and one new **BR-023**;
 `domain-model.md`, `api.md`, and `product.md` §10 (Q-4 now Resolved) all updated.
-**There is a migration this phase** (`1787930000000-AddStockOutReasonCategory`), unlike
-Phases 14–17 — run `npm run migration:run` after pulling. `serve.js` is still
-byte-for-byte unchanged and running the frontend still needs no `npm install`. See
+**There is a migration in Phase 18** (`1787930000000-AddStockOutReasonCategory`), unlike
+Phases 14–17 and 19 — run `npm run migration:run` after pulling. See
 `docs/architecture-observations.md`'s Phase 18 section for the additive-nullable-enum
 pattern and the three-registries `@Check`.
 

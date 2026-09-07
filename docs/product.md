@@ -287,3 +287,12 @@ These affect the UI mockup and should be resolved before or during that phase.
   accurately" already covers it), and FR-021 is unchanged — the category is optional.
   There **is** a migration this phase (`1787930000000-AddStockOutReasonCategory`),
   unlike Phases 14–17. Q-7 (multi-location) remains open, untouched since Phase 5.
+- **[Added 2026-09-07, Phase 19]** Dashboard stock counts in one query
+  (`docs/phase-19-plan.md`, issue #9, `requirements.md`'s Phase 19 note,
+  `business-rules.md`'s Phase 19 line, `docs/architecture-observations.md`'s Phase 19
+  section). Same shape as the Phase 7, 10, 11, 14, 15, 16, and 17 entries, not Phase
+  9's, 12's, or 18's: §4 gains no user goal, §5 no use case, §7 no scope — computing
+  the dashboard summary in one database query instead of two is an implementation
+  change with a byte-identical response. No migration, no `domain-model.md` change. It
+  is the `DashboardService` follow-on Phase 14 §7 named by hand. Q-4 was resolved in
+  Phase 18; Q-7 (multi-location) remains open, untouched since Phase 5.

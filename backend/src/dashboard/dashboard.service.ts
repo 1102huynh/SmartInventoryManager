@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { EntityStatus } from '../common/enums/entity-status.enum';
 import { InventoryService } from '../inventory/inventory.service';
+import { joinCurrentStock } from '../inventory/stock-aggregate.query';
 import { Product } from '../products/product.entity';
 
 @Injectable()
@@ -17,21 +18,41 @@ export class DashboardService {
   // it does not introduce any new data of its own, matching the domain model's framing
   // of the dashboard as a pure read-side composition, not a fourth domain.
   async getSummary() {
-    const products = await this.productsRepository.find();
-    const stockMap = await this.inventoryService.getCurrentStockMap(
-      products.map((p) => p.id),
-    );
+    // Phase 19 (docs/phase-19-plan.md §1): current stock per product is computed in
+    // this one query — the same grouped-subquery join `ProductsService.findAll` uses
+    // (Phase 14 Fork B), shared via `joinCurrentStock` — replacing the separate
+    // `productsRepository.find()` + `inventoryService.getCurrentStockMap()` round-
+    // trips this method used to make. The whole-catalogue read stays: a summary that
+    // reports `lowStockCount` inherently needs every product, so it is not a paging
+    // problem (Phase 14 §7 names this follow-on explicitly).
+    //
+    // `ORDER BY product.name ASC` is new. The old `find()` had no ORDER BY, so which
+    // five products landed in `needsAttention` when more than five were low-stock was
+    // whatever order the executor happened to produce — not guaranteed. Ordering by
+    // name makes it deterministic and matches `findAll`. Same kind of determinism
+    // improvement Phase 11 made for `recentActivity` (see the note below).
+    const { entities, raw } = await joinCurrentStock(
+      this.productsRepository.createQueryBuilder('product'),
+    )
+      .orderBy('product.name', 'ASC')
+      .getRawAndEntities<{ currentStock: string | number | null }>();
+
+    // `currentStock` comes back from `pg` as a numeric string (COALESCE over a
+    // bigint SUM); align it onto each entity by index, as `findAll`'s `mergeStock`
+    // does.
+    const products = entities.map((product, i) => ({
+      ...product,
+      currentStock: Number(raw[i]?.currentStock ?? 0),
+    }));
 
     const activeProducts = products.filter(
       (p) => p.status === EntityStatus.ACTIVE,
     );
     const lowStockProducts = products.filter((p) => {
       if (p.lowStockThreshold === null) return false;
-      return (stockMap.get(p.id) ?? 0) <= p.lowStockThreshold;
+      return p.currentStock <= p.lowStockThreshold;
     });
-    const outOfStockProducts = products.filter(
-      (p) => (stockMap.get(p.id) ?? 0) <= 0,
-    );
+    const outOfStockProducts = products.filter((p) => p.currentStock <= 0);
 
     // Phase 11 (docs/phase-11-plan.md §2 "the actual win"): opening the dashboard used
     // to be O(whole transaction history), twice — listAll({}) materialised the entire
@@ -59,10 +80,9 @@ export class DashboardService {
       // + out-of-stock merged. A product with no threshold configured is out of stock
       // "silently" here (still counted in outOfStockCount above) — that's BR-061
       // ("never flagged low-stock without a threshold") applied consistently, not a
-      // gap. See docs/business-rules.md BR-062 for the full reasoning.
-      needsAttention: lowStockProducts
-        .map((p) => ({ ...p, currentStock: stockMap.get(p.id) ?? 0 }))
-        .slice(0, 5),
+      // gap. See docs/business-rules.md BR-062 for the full reasoning. Each row
+      // already carries `currentStock` from the query above.
+      needsAttention: lowStockProducts.slice(0, 5),
     };
   }
 }

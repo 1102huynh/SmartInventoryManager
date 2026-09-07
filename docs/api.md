@@ -1,6 +1,6 @@
-# API Documentation — Phase 18
+# API Documentation — Phase 19
 
-Status: Phase 18 — Structured Stock-Out Reason Categories
+Status: Phase 19 — Dashboard stock counts in one query (no route or shape change)
 Base URL: `http://localhost:3000` (see `backend/.env.example`)
 
 Every resource response includes `createdAt` (an ISO timestamp, server-set, never

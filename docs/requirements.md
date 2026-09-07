@@ -224,6 +224,19 @@ kind of stock-out it was. It adds no `Sale`/`Order` entity — "sale" is one val
 enum, with no customer and no price (Q-1). A full Sale entity stays Future
 (`product.md` §7).
 
+## Dashboard Stock Counts in One Query (Phase 19 — no new FR)
+
+Phase 19 (`docs/phase-19-plan.md`, issue #9) makes `DashboardService.getSummary`
+compute `lowStockCount` / `outOfStockCount` / `needsAttention` from the same SQL that
+reads the products — the grouped-subquery stock join Phase 14 Fork B introduced,
+extracted into a shared `joinCurrentStock` helper — instead of a whole-catalogue
+`find()` followed by a second `getCurrentStockMap()` round-trip. The ninth "no new FR"
+note, and the direct kin of Phases 11 and 14's: **FR-050 (the dashboard summary),
+FR-004 ("view all products…"), and FR-060/FR-061 (low-stock flagging) all read exactly
+as before.** How many database trips a summary takes to reach the same numbers is not a
+user goal; the `GET /dashboard/summary` response is byte-for-byte unchanged. No new
+FR, no migration, no domain-model change.
+
 ## Cross-Reference Summary
 
 ```

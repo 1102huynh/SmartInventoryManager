@@ -10,7 +10,6 @@ export function productList(container, query){
   let search = '';
   let status = query.get('status') || 'all'; // all | active | inactive | low | out
   let category = query.get('category') || '';
-  let override = 'normal';
   // Phase 14 (docs/phase-14-plan.md §3): `page` state, reset to 1 on any search or
   // filter change (a filtered result has its own page 1). PAGE_SIZE mirrors the
   // backend's DEFAULT_PAGE_SIZE — the server would apply it anyway; sending it keeps
@@ -22,13 +21,10 @@ export function productList(container, query){
   function load(){
     container.innerHTML = header() + toolbar() + `<div class="table-wrap"><table class="data-table"><tbody>${UI.skeletonRows(6,6)}</tbody></table></div>`;
     attachHeaderHandlers();
-    UI.mockFetch(() => {
-      if (override === 'empty') return { items: [], total: 0, page: 1 };
-      // low/out used to be filtered client-side after fetching everything; the API's
-      // ?status= now accepts them directly (ProductsService.findAll), so the server
-      // does the filtering — and, as of Phase 14, the paging — instead of the browser.
-      return Store.listProducts({ search, category: category || undefined, status: status === 'all' ? undefined : status, page, pageSize: PAGE_SIZE });
-    }, { forceState: override === 'error' ? 'error' : null })
+    // low/out used to be filtered client-side after fetching everything; the API's
+    // ?status= now accepts them directly (ProductsService.findAll), so the server
+    // does the filtering — and, as of Phase 14, the paging — instead of the browser.
+    Store.listProducts({ search, category: category || undefined, status: status === 'all' ? undefined : status, page, pageSize: PAGE_SIZE })
       .then(result => {
         total = result.total;
         page = result.page;
@@ -65,13 +61,14 @@ export function productList(container, query){
         ${getCategories().map(c => `<option value="${c.id}" ${c.id===category?'selected':''}>${UI.esc(c.name)}</option>`).join('')}
       </select>
       ${isOwner() ? '<a class="btn btn-ghost btn-sm" href="#/categories">Manage categories</a>' : ''}
-      ${UI.previewControl(override)}
     </div>`;
   }
 
   function body(list){
     if (list.length === 0){
-      if (override === 'empty') return UI.emptyState('No products yet', 'Add your first product to start tracking stock.');
+      // A truly empty catalogue vs. a filter that matched nothing — different copy,
+      // told apart by whether any search/filter is actually narrowing the list.
+      if (!search && !category && status === 'all') return UI.emptyState('No products yet', 'Add your first product to start tracking stock.');
       return UI.emptyState('No matching products', 'Try a different search term or clear the filters.');
     }
     return `<div class="table-wrap"><table class="data-table">
@@ -95,8 +92,6 @@ export function productList(container, query){
     if (s) s.addEventListener('change', e => { status = e.target.value; page = 1; load(); });
     const c = container.querySelector('#pl-category');
     if (c) c.addEventListener('change', e => { category = e.target.value; page = 1; load(); });
-    const p = container.querySelector('#preview-select');
-    if (p) p.addEventListener('change', e => { override = e.target.value; page = 1; load(); });
   }
 
   function attachAll(){
@@ -115,7 +110,7 @@ export function productList(container, query){
       load();
     }));
     const retry = container.querySelector('#retry');
-    if (retry) retry.addEventListener('click', () => { override = 'normal'; load(); });
+    if (retry) retry.addEventListener('click', load);
   }
 
   load();

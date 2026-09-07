@@ -17,11 +17,12 @@ import { setCategories } from './reference-data.js';
 import { UI } from './ui.js';
 import { renderApp } from './router.js';
 
-// Phase 1's mockup scaffolding that survived into the real app: mockFetch (in ui.js)
-// and the `?state=error`/`empty` overrides let a developer force a screen's
-// error/empty state without breaking the backend. Phase 13 moved them and changed
-// nothing about them — not deleted (a behaviour change, deferred with its own
-// trigger in docs/phase-13-plan.md §7), not promoted.
+// Phase 1's navigable-mockup scaffolding — `UI.mockFetch` plus the per-view
+// `?state=error`/`empty` "Preview state" control — was carried unchanged through the
+// Phase 13 split and removed in Phase 20 (issue #10, docs/phase-20-plan.md): every
+// list view now calls its `Store.*` method directly, and a real error surfaces the
+// real `errorState` panel. The backend's error and empty states are exercised in
+// development against a real (or stopped) API instead.
 
 export const Store = {
   // Every request goes through here: it attaches the bearer token (see

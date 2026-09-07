@@ -237,6 +237,19 @@ as before.** How many database trips a summary takes to reach the same numbers i
 user goal; the `GET /dashboard/summary` response is byte-for-byte unchanged. No new
 FR, no migration, no domain-model change.
 
+## Remove the `mockFetch` / `?state=` Scaffolding (Phase 20 — no new FR)
+
+Phase 20 (`docs/phase-20-plan.md`, issue #10) deletes the Phase 1 navigable-mockup
+machinery — `UI.mockFetch`, `UI.previewControl`, and the per-view `?state=` / `override`
+handling — that Phase 13 relocated unchanged and explicitly deferred deleting (Phase 13
+§7's own trigger, now met). The tenth "no new FR" note, kin to Phases 7, 8, 10, 11, 14,
+15, 16, 17, and 19: **FR-004 (view products), FR-012 (view suppliers), FR-031 (view
+history), FR-050 (the dashboard), FR-065 (the audit log), and FR-066 (approvals) all read
+exactly as before** — none ever mentioned a "Preview state" control, because it was
+review-only scaffolding, not product. The real empty and error panels are unchanged; only
+the in-page way of faking them is gone. No new FR, no backend change, no migration, no
+domain-model change.
+
 ## Cross-Reference Summary
 
 ```

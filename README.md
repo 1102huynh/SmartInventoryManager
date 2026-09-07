@@ -179,7 +179,21 @@ See `docs/learning-notes/ci-and-environments.md`.
 
 ## Current phase
 
-Phase 19 — Dashboard stock counts in one query (`docs/phase-19-plan.md`, issue #9):
+Phase 20 — Remove the `mockFetch` / `?state=` mockup scaffolding (`docs/phase-20-plan.md`,
+issue #10): deletes the last of Phase 1's navigable-mockup machinery — `UI.mockFetch`,
+`UI.previewControl`, and the per-view `?state=` / `override` handling — that Phase 13 split
+out **unchanged** and explicitly deferred removing (Phase 13 §7's own trigger, now met). Six
+list screens (Dashboard, Products, Suppliers, Audit Log, Approvals, Inventory History) each
+carried a dashed "Preview state" `<select>` — *Normal / Loading / Empty / Error* — that
+shipped to production because the frontend has no build step to gate it. Each view's data
+path is now plainly `Store.x().then(render).catch(errorState)`. **The real empty and error
+panels are unchanged** — only the in-page way of faking them is gone; each screen now picks
+its "nothing yet" vs. "no matches" copy from whether a filter is active. **Frontend only** —
+no backend file, no `serve.js`, no route, **no migration**; a tenth "no new FR" note and a
+ninth "no new BR" line. The existing `node --test` suite (28 tests) passes unedited. See
+`docs/architecture-observations.md`'s Phase 20 section.
+
+Earlier phases: Phase 19 — Dashboard stock counts in one query (`docs/phase-19-plan.md`, issue #9):
 `DashboardService.getSummary` used to read the whole product catalogue with
 `productsRepository.find()` and then make a **second** trip to sum every product's
 transactions (`getCurrentStockMap`) before it could count the low / out-of-stock ones.

@@ -223,8 +223,6 @@ table.data-table tbody tr.clickable:hover{background:var(--surface-2);}
 .segmented button{background:var(--surface); border:none; padding:7px 13px; font-size:.8rem; font-weight:600; color:var(--ink-muted); cursor:pointer; border-right:1px solid var(--border-strong);}
 .segmented button:last-child{border-right:none;}
 .segmented button.active{background:var(--accent-soft); color:var(--accent-strong);}
-.preview-state{margin-left:auto; display:flex; align-items:center; gap:6px; border:1px dashed var(--border-strong); border-radius:var(--radius); padding:4px 8px; font-size:.72rem; color:var(--ink-faint);}
-.preview-state select{border:none; background:transparent; color:var(--ink-muted); font-size:.72rem; font-weight:600;}
 
 /* Phase 17 (docs/phase-17-plan.md §3): the shared search-as-you-type picker — see
    frontend/typeahead.js. Replaces the two catalogue <select>s that loaded every row. */

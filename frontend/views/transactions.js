@@ -358,7 +358,6 @@ export function historyView(container, query){
   let productId = '';
   let selectedProductLabel = ''; // shown in the typeahead once a product is picked
   let days = '';
-  let override = 'normal';
   // Phase 17 (docs/phase-17-plan.md §3): the product filter is a typeahead querying
   // /products?search= a page at a time — not a <select> pre-loaded with every product
   // (issue #7). `productPicker` holds the live instance so each re-render tears the
@@ -368,10 +367,7 @@ export function historyView(container, query){
   function load(){
     container.innerHTML = header() + toolbar() + `<div class="table-wrap"><table class="data-table"><tbody>${UI.skeletonRows(6,7)}</tbody></table></div>`;
     attachHeaderHandlers();
-    UI.mockFetch(() => {
-      if (override === 'empty') return { items: [], truncated: false };
-      return Store.listAllTransactions({ type: type || undefined, productId: productId || undefined, days: days ? Number(days) : undefined });
-    }, { forceState: override === 'error' ? 'error' : null })
+    Store.listAllTransactions({ type: type || undefined, productId: productId || undefined, days: days ? Number(days) : undefined })
       .then(result => { container.innerHTML = header() + toolbar() + body(result.items, result.truncated); attachAll(); })
       .catch(err => { container.innerHTML = header() + toolbar() + UI.errorState(err.message, 'retry'); attachAll(); });
   }
@@ -395,13 +391,14 @@ export function historyView(container, query){
         <option value="30" ${days==='30'?'selected':''}>Last 30 days</option>
         <option value="90" ${days==='90'?'selected':''}>Last 90 days</option>
       </select>
-      ${UI.previewControl(override)}
     </div>`;
   }
 
   function body(list, truncated){
     if (list.length === 0){
-      return UI.emptyState(override === 'empty' ? 'No transactions recorded' : 'No matching transactions', override === 'empty' ? 'Stock movements will appear here once recorded.' : 'Try a different filter combination.');
+      // No filter active means nothing has been recorded yet, not a filter miss.
+      const unfiltered = !type && !productId && !days;
+      return UI.emptyState(unfiltered ? 'No transactions recorded' : 'No matching transactions', unfiltered ? 'Stock movements will appear here once recorded.' : 'Try a different filter combination.');
     }
     // Phase 11 (docs/phase-11-plan.md §3): without this line, a shop open two years
     // sees a history that silently stops in the middle of last month.
@@ -452,12 +449,11 @@ export function historyView(container, query){
       });
     }
     const d = container.querySelector('#h-days'); if (d) d.addEventListener('change', e => { days = e.target.value; load(); });
-    const pr = container.querySelector('#preview-select'); if (pr) pr.addEventListener('change', e => { override = e.target.value; load(); });
   }
   function attachAll(){
     attachHeaderHandlers();
     container.querySelectorAll('[data-goto]').forEach(row => row.addEventListener('click', () => UI.navigate(row.dataset.goto)));
-    const retry = container.querySelector('#retry'); if (retry) retry.addEventListener('click', () => { override = 'normal'; load(); });
+    const retry = container.querySelector('#retry'); if (retry) retry.addEventListener('click', load);
   }
 
   load();

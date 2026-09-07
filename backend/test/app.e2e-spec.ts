@@ -358,4 +358,113 @@ describe('Smart Inventory Manager API (e2e)', () => {
       expect(bad.status).toBe(400);
     });
   });
+
+  // Phase 14 (docs/phase-14-plan.md §5): the four catalogue reads gain OPTIONAL
+  // `?page=&pageSize=`. Proven here for `/products` (which also exercises the Fork B
+  // in-SQL stock query); `categories.e2e-spec.ts` and `users.e2e-spec.ts` cover the
+  // other two shapes, `roles.e2e-spec.ts` covers the `/users` gate.
+  describe('optional catalogue paging (Phase 14)', () => {
+    async function seedProducts(n: number): Promise<void> {
+      for (let i = 0; i < n; i++) {
+        await auth(request(app.getHttpServer()).post('/products'))
+          .send({
+            name: `Product ${String(i).padStart(2, '0')}`,
+            sku: `SKU-${String(i).padStart(2, '0')}`,
+            unit: 'each',
+            lowStockThreshold: 5,
+          })
+          .expect(201);
+      }
+    }
+
+    it('with no paging param, GET /products is a bare JSON array (the pickers’ contract)', async () => {
+      await seedProducts(3);
+      const res = await auth(request(app.getHttpServer()).get('/products'));
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body).toHaveLength(3);
+    });
+
+    it('with a paging param, GET /products is a { items, page, pageSize, total } envelope', async () => {
+      await seedProducts(12);
+      const res = await auth(
+        request(app.getHttpServer()).get('/products?page=2&pageSize=5'),
+      );
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(false);
+      expect(res.body).toMatchObject({ page: 2, pageSize: 5, total: 12 });
+      expect(res.body.items).toHaveLength(5);
+      expect(res.body.items[0].name).toBe('Product 05');
+      // The Fork B computed fields still ride each item.
+      expect(res.body.items[0]).toEqual(
+        expect.objectContaining({
+          currentStock: 0,
+          outOfStock: true,
+          hasHistory: false,
+        }),
+      );
+    });
+
+    it('pageSize alone is enough to page (page defaults to 1)', async () => {
+      await seedProducts(4);
+      const res = await auth(
+        request(app.getHttpServer()).get('/products?pageSize=2'),
+      );
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ page: 1, pageSize: 2, total: 4 });
+      expect(res.body.items).toHaveLength(2);
+    });
+
+    it('rejects an out-of-range or non-numeric page / pageSize with 400', async () => {
+      for (const qs of [
+        'pageSize=0',
+        'pageSize=101',
+        'pageSize=abc',
+        'page=0',
+        'page=-1',
+        'page=abc',
+      ]) {
+        const res = await auth(
+          request(app.getHttpServer()).get(`/products?${qs}`),
+        );
+        expect(res.status).toBe(400);
+      }
+    });
+
+    it('a page past the last returns 200 with an empty items array and the real total, not 404', async () => {
+      await seedProducts(3);
+      const res = await auth(
+        request(app.getHttpServer()).get('/products?page=99&pageSize=10'),
+      );
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ page: 99, pageSize: 10, total: 3 });
+      expect(res.body.items).toEqual([]);
+    });
+
+    it('?status=low&page=&pageSize= pages the low-stock set with total = all low matches', async () => {
+      // 6 products, 2 of them low-stock (stock 2, threshold 5); the rest normal.
+      await seedProducts(6);
+      const list = await auth(request(app.getHttpServer()).get('/products'));
+      const rows = list.body as Array<{ id: number }>;
+      const ids = rows.map((p) => p.id);
+      for (const [i, id] of ids.entries()) {
+        const quantity = i < 2 ? 2 : 50; // first two → low stock, rest → normal
+        await auth(
+          request(app.getHttpServer()).post(`/products/${id}/stock-in`),
+        )
+          .send({ quantity, occurredAt: '2026-08-01' })
+          .expect(201);
+      }
+
+      const page = await auth(
+        request(app.getHttpServer()).get(
+          '/products?status=low&page=1&pageSize=1',
+        ),
+      );
+      expect(page.status).toBe(200);
+      expect(page.body.total).toBe(2); // not "1 product by name, then filtered"
+      expect(page.body.items).toHaveLength(1);
+      expect(page.body.items[0].lowStock).toBe(true);
+    });
+  });
 });

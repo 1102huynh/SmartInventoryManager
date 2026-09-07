@@ -202,4 +202,51 @@ describe('Categories (e2e)', () => {
     expect((await request(server).patch('/categories/1')).status).toBe(401);
     expect((await request(server).delete('/categories/1')).status).toBe(401);
   });
+
+  // Phase 14 (docs/phase-14-plan.md §5): optional `?page=&pageSize=`. With neither —
+  // the `Store.loadReferenceData` path that fills the `CATEGORIES` cache — GET
+  // /categories must stay a bare array of every row.
+  describe('optional paging (Phase 14)', () => {
+    async function seedCategories(n: number): Promise<void> {
+      for (let i = 0; i < n; i++) {
+        await auth(request(app.getHttpServer()).post('/categories'))
+          .send({ name: `Category ${String(i).padStart(2, '0')}` })
+          .expect(201);
+      }
+    }
+
+    it('no paging param → a bare array of every category (the reference-cache contract)', async () => {
+      await seedCategories(6);
+      const res = await auth(request(app.getHttpServer()).get('/categories'));
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(true);
+      expect(res.body).toHaveLength(6);
+    });
+
+    it('with a paging param → a { items, page, pageSize, total } envelope', async () => {
+      await seedCategories(6);
+      const res = await auth(
+        request(app.getHttpServer()).get('/categories?page=1&pageSize=4'),
+      );
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body)).toBe(false);
+      expect(res.body).toMatchObject({ page: 1, pageSize: 4, total: 6 });
+      const items = res.body.items as Array<{ name: string }>;
+      expect(items.map((c) => c.name)).toEqual([
+        'Category 00',
+        'Category 01',
+        'Category 02',
+        'Category 03',
+      ]);
+    });
+
+    it('rejects a bad pageSize with 400', async () => {
+      for (const qs of ['pageSize=0', 'pageSize=101', 'page=0']) {
+        const res = await auth(
+          request(app.getHttpServer()).get(`/categories?${qs}`),
+        );
+        expect(res.status).toBe(400);
+      }
+    });
+  });
 });

@@ -89,20 +89,10 @@ export class InventoryService {
     });
     return count > 0;
   }
-
-  // Batched sibling of hasHistory, for ProductsService.findAll — the frontend needs
-  // to know this per product (to lock the SKU field and gate the Delete button), same
-  // N+1-avoidance reasoning as getCurrentStockMap.
-  async getHasHistoryMap(productIds: number[]): Promise<Map<number, boolean>> {
-    if (productIds.length === 0) return new Map();
-    const rows = await this.transactionsRepository
-      .createQueryBuilder('tx')
-      .select('DISTINCT tx.productId', 'productId')
-      .where('tx.productId IN (:...productIds)', { productIds })
-      .getRawMany<{ productId: number }>();
-    const withHistory = new Set(rows.map((r) => r.productId));
-    return new Map(productIds.map((id) => [id, withHistory.has(id)]));
-  }
+  // Phase 14 (docs/phase-14-plan.md §1 Fork B): `getHasHistoryMap` was removed here —
+  // its one caller, `ProductsService.findAll`, now computes `hasHistory` inside its
+  // own query (the grouped subquery join tells it whether a product has any
+  // transaction), so the batched round-trip no longer has a purpose.
 
   // Phase 11 (docs/phase-11-plan.md §1). Bounded, newest-first, no offset pagination.
   //

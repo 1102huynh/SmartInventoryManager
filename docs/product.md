@@ -236,3 +236,12 @@ These affect the UI mockup and should be resolved before or during that phase.
   use case, §7 gains no scope, and no application code changes at all — a test pipeline
   is an engineering practice. It resolves none of §10's open questions — Q-4 (sale
   concept) and Q-7 (multi-location) remain exactly as open as before.
+- **[Added 2026-09-07, Phase 14]** Catalogue paging (`docs/phase-14-plan.md`,
+  `api.md`, `requirements.md`'s Phase 14 note,
+  `docs/architecture-observations.md`'s Phase 14 section). Same shape as the Phase 7,
+  10, 11, and 15 entries, not Phase 9's or Phase 12's: §4 gains no user goal and §5
+  gains no use case — a page, a page size, and a Prev/Next control are a screen
+  affordance plus transport, not a product decision — and §7 gains no scope. It
+  resolves none of §10's open questions; Q-4 (sale concept) and Q-7 (multi-location)
+  remain exactly as open as before, untouched since Phase 5. (Numbered before Phase 15,
+  implemented after it.)

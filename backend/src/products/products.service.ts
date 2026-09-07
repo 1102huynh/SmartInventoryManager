@@ -12,6 +12,8 @@ import { AuditEntityType } from '../common/enums/audit-entity-type.enum';
 import { AuditEventType } from '../common/enums/audit-event-type.enum';
 import { EntityStatus } from '../common/enums/entity-status.enum';
 import { InventoryService } from '../inventory/inventory.service';
+import { Paged, pageEnvelope, resolvePaging } from '../common/pagination';
+import { InventoryTransaction } from '../inventory/inventory-transaction.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { QueryProductsDto } from './dto/query-products.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -28,6 +30,13 @@ export interface ProductWithStock extends Product {
   hasHistory: boolean;
 }
 
+// The two computed columns `findAll`'s query adds via `addSelect`, read back off
+// `getRawAndEntities` (Phase 14, Fork B).
+interface RawStock {
+  currentStock: string | number | null;
+  hasHistory: boolean;
+}
+
 @Injectable()
 export class ProductsService {
   constructor(
@@ -39,13 +48,40 @@ export class ProductsService {
     private readonly auditService: AuditService,
   ) {}
 
-  async findAll(query: QueryProductsDto): Promise<ProductWithStock[]> {
+  async findAll(
+    query: QueryProductsDto,
+  ): Promise<ProductWithStock[] | Paged<ProductWithStock>> {
     // Built with the query builder rather than repository.find({ where }), because
     // "search name OR sku, AND status, AND category" mixes AND and OR — repository.find
     // only expresses that cleanly as an array of whole where-clauses (awkward here),
     // while the query builder lets andWhere/OR nest naturally.
+    //
+    // Phase 14 (docs/phase-14-plan.md §1 Fork B): current stock and `hasHistory` are
+    // computed IN this query now — a grouped subquery join over inventory_transactions
+    // (`IDX_2520d97de0c9a0fbfc9b00f4c1` on product_id backs the GROUP BY) — instead of
+    // the two extra round-trips (`getCurrentStockMap` + `getHasHistoryMap`) this method
+    // used to fire after `getMany`. That is what lets `low`/`out` become real WHERE
+    // conditions below: `?status=low&pageSize=50` now pages the low-stock set, where
+    // the old post-fetch `.filter()` would have taken 50 products by name and *then*
+    // filtered (Phase 11 §1's failure mode). This runs whether or not paging is
+    // active — one code path, a strict improvement even for the unpaged callers.
     const qb = this.productsRepository
       .createQueryBuilder('product')
+      .leftJoin(
+        (sub) =>
+          sub
+            .select('tx.product_id', 'product_id')
+            .addSelect('SUM(tx.quantity_delta)', 'stock')
+            .from(InventoryTransaction, 'tx')
+            .groupBy('tx.product_id'),
+        'stock_agg',
+        'stock_agg.product_id = product.id',
+      )
+      .addSelect('COALESCE(stock_agg.stock, 0)', 'currentStock')
+      // A GROUP BY row exists for a product iff it has at least one transaction — so
+      // "the join matched" *is* hasHistory, including for a product whose deltas
+      // happen to sum to zero.
+      .addSelect('stock_agg.product_id IS NOT NULL', 'hasHistory')
       .orderBy('product.name', 'ASC');
     if (query.status === 'active')
       qb.andWhere('product.status = :status', { status: EntityStatus.ACTIVE });
@@ -62,27 +98,51 @@ export class ProductsService {
         search: `%${query.search}%`,
       });
     }
-    const products = await qb.getMany();
-
-    const ids = products.map((p) => p.id);
-    const [stockMap, historyMap] = await Promise.all([
-      this.inventoryService.getCurrentStockMap(ids),
-      this.inventoryService.getHasHistoryMap(ids),
-    ]);
-    let withStock = products.map((p) =>
-      this.attachStock(
-        p,
-        stockMap.get(p.id) ?? 0,
-        historyMap.get(p.id) ?? false,
-      ),
-    );
-
-    // low/out depend on a *computed* value (threshold vs. current stock), so they're
-    // filtered here in application code rather than in the SQL WHERE clause above.
-    if (query.status === 'low') withStock = withStock.filter((p) => p.lowStock);
+    // Fork B: low/out are WHERE conditions over the in-query aggregate, not a
+    // post-SQL `.filter()`. `outOfStock` is `currentStock <= 0` (a product with no
+    // transactions is out of stock); `lowStock` needs a configured threshold —
+    // BR-060/061's "null means never flagged".
+    if (query.status === 'low')
+      qb.andWhere(
+        'product.low_stock_threshold IS NOT NULL AND COALESCE(stock_agg.stock, 0) <= product.low_stock_threshold',
+      );
     if (query.status === 'out')
-      withStock = withStock.filter((p) => p.outOfStock);
-    return withStock;
+      qb.andWhere('COALESCE(stock_agg.stock, 0) <= 0');
+
+    const paging = resolvePaging(query);
+    if (!paging) {
+      const { entities, raw } = await qb.getRawAndEntities<RawStock>();
+      return this.mergeStock(entities, raw);
+    }
+    // Count the filtered set before the window is applied — `getCount` drops the
+    // custom SELECT list, ORDER BY, and any limit/offset, keeping the joins and
+    // WHERE, so `total` is the number of matches, not the page.
+    const total = await qb.getCount();
+    qb.offset(paging.skip).limit(paging.take);
+    const { entities, raw } = await qb.getRawAndEntities<RawStock>();
+    return pageEnvelope(this.mergeStock(entities, raw), total, paging);
+  }
+
+  // Re-attaches the in-query computed columns (index-aligned with the entities) onto
+  // each Product, and derives `lowStock`/`outOfStock` from `currentStock` exactly as
+  // `attachStock` does for the single-product reads. `currentStock` comes back from
+  // `pg` as a numeric string (COALESCE over a bigint SUM); `hasHistory` as a real
+  // boolean.
+  private mergeStock(products: Product[], raw: RawStock[]): ProductWithStock[] {
+    return products.map((product, i) => {
+      const currentStock = Number(raw[i]?.currentStock ?? 0);
+      const hasHistory = raw[i]?.hasHistory === true;
+      const lowStock =
+        product.lowStockThreshold !== null &&
+        currentStock <= product.lowStockThreshold;
+      return {
+        ...product,
+        currentStock,
+        lowStock,
+        outOfStock: currentStock <= 0,
+        hasHistory,
+      };
+    });
   }
 
   async findOne(id: number): Promise<ProductWithStock> {

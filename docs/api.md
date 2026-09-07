@@ -1,6 +1,6 @@
-# API Documentation — Phase 12
+# API Documentation — Phase 14
 
-Status: Phase 12 — Adjustment Approval
+Status: Phase 14 — Catalogue Paging
 Base URL: `http://localhost:3000` (see `backend/.env.example`)
 
 Every resource response includes `createdAt` (an ISO timestamp, server-set, never
@@ -79,11 +79,29 @@ at most that many rows, newest-first, with no offset pagination — the same sha
 the response carries **`X-Result-Truncated: true`**; the header is *absent* otherwise,
 so its presence is the signal, not its value. As of Phase 12 it appears on **four**
 routes — `/inventory-transactions`, `/products/:id/transactions`, `/audit-events`, and
-`/adjustment-requests` (below) — and no others. The four catalogue reads (`/products`,
-`/suppliers`, `/categories`, `/users`)
-are deliberately **not** capped — a truncated catalogue is a wrong answer where a
-truncated log is a reading position; bounding them needs a paging design, deferred
-(`docs/phase-11-plan.md` §7).
+`/adjustment-requests` (below) — and no others.
+
+**Phase 14 (`docs/phase-14-plan.md`): the four catalogue reads gain OPTIONAL paging.**
+`GET /products`, `/suppliers`, `/categories`, and `/users` now accept `page` and
+`pageSize`. When **either** is supplied the response is a **paged envelope**
+`{ items, page, pageSize, total }` — `items` is the page, `total` is the count of the
+whole filtered set ("Page 3 of 12 · 573 products"). When **neither** is supplied the
+response is the **bare array**, exactly as before — the shape the stock/adjustment
+wizard pickers and the `CATEGORIES` reference cache depend on, so those callers send no
+paging param and are unaffected. `pageSize` is validated `1 <= pageSize <= 100`
+(`400`, never a silent clamp); `page` is `>= 1`; an omitted `pageSize` defaults to 50
+server-side. A `page` past the last is **`200` with `items: []` and the real `total`**,
+not `404` — an empty page is a valid answer to "show me page 99".
+
+**The shape differs from the log reads on purpose:** a log read returns "the most
+recent N + filters + `X-Result-Truncated`" — a *reading position*; a catalogue read
+returns "page N of a total" — a *page of a whole* (`docs/phase-11-plan.md` §1's "a cap
+on a log is a reading position, a cap on a catalogue is a wrong answer", now in two
+response shapes). Offset pagination is used because a catalogue is ordered by a stable
+name key a person grows a few times a week, unlike a log where rows arrive at the top.
+The catalogue routes are still **unbounded by default** — three of the four must be,
+for the pickers and the cache — so the unbounded-read note in
+`docs/architecture-observations.md` is only *partly* retired.
 
 ## Auth
 
@@ -97,7 +115,7 @@ truncated log is a reading position; bounding them needs a paging design, deferr
 
 | Method | Path | Body | Notes |
 |---|---|---|---|
-| GET | `/categories` | | All categories, alphabetical. |
+| GET | `/categories` | `?page=&pageSize=` | All categories, alphabetical. **Optional paging (Phase 14):** with `page` or `pageSize`, returns `{ items, page, pageSize, total }`; with neither (the `CATEGORIES` reference-cache path), the bare array. |
 | POST | `/categories` | `{ name }` | **Owner only.** 409 on duplicate name. |
 | PATCH | `/categories/:id` | `{ name }` | **Owner only.** 404 if missing; 409 on duplicate name. |
 | DELETE | `/categories/:id` | | **Owner only.** 204 on success; any product referencing this category has its `categoryId` set to `null` (`ON DELETE SET NULL`). |
@@ -106,7 +124,7 @@ truncated log is a reading position; bounding them needs a paging design, deferr
 
 | Method | Path | Body / Query | Notes |
 |---|---|---|---|
-| GET | `/suppliers` | `?search=&status=active\|inactive` | |
+| GET | `/suppliers` | `?search=&status=active\|inactive&page=&pageSize=` | **Optional paging (Phase 14):** with `page` or `pageSize`, `{ items, page, pageSize, total }`; with neither (the stock-in wizard's supplier picker), the bare array. |
 | GET | `/suppliers/:id` | | 404 if missing |
 | POST | `/suppliers` | `{ name, contactName?, email?, phone? }` | **Owner only.** |
 | PATCH | `/suppliers/:id` | same shape, all optional | **Owner only.** |
@@ -116,7 +134,7 @@ truncated log is a reading position; bounding them needs a paging design, deferr
 
 | Method | Path | Body / Query | Notes |
 |---|---|---|---|
-| GET | `/products` | `?search=&status=active\|inactive\|low\|out&categoryId=` | Response items include computed `currentStock`, `lowStock`, `outOfStock`, `hasHistory` |
+| GET | `/products` | `?search=&status=active\|inactive\|low\|out&categoryId=&page=&pageSize=` | Response items include computed `currentStock`, `lowStock`, `outOfStock`, `hasHistory`. **Optional paging (Phase 14):** with `page` or `pageSize`, `{ items, page, pageSize, total }` (each item carries the same computed fields); with neither (the wizard product picker, the category screen's product-count read, the History filter), the bare array. `status=low`/`out` is a SQL `WHERE` condition now (current stock is computed in the query), so `?status=low&page=…` pages the low-stock set — not the first `pageSize` by name then filtered. |
 | GET | `/products/:id` | | 404 if missing |
 | POST | `/products` | `{ name, sku, unit, categoryId?, lowStockThreshold? }` | **Owner only.** 409 on duplicate SKU |
 | PATCH | `/products/:id` | `{ name, unit, categoryId?, lowStockThreshold?, sku? }` | **Owner only.** `sku` change rejected (409) once the product has any transaction history (BR-001) |
@@ -230,7 +248,7 @@ audit log — see "Audit Log" below.
 
 | Method | Path | Body | Notes |
 |---|---|---|---|
-| GET | `/users` | | All users, by id. Each item includes a computed `locked: boolean` (Phase 8) — the raw `lockedUntil` timestamp is never exposed, only whether it's currently in the future. |
+| GET | `/users` | `?page=&pageSize=` | All users, by id. Each item includes a computed `locked: boolean` (Phase 8) — the raw `lockedUntil` timestamp is never exposed, only whether it's currently in the future. **Optional paging (Phase 14):** with `page` or `pageSize`, `{ items, page, pageSize, total }` (each item still carries `locked`); with neither, the bare array. Paging does not change the Owner-only gate. |
 | GET | `/users/:id` | | 404 if missing. Same `locked: boolean` as the list. |
 | POST | `/users` | `{ name, email, role, password }` | `201`. Sets the initial password directly — no generated credential, no forced-change-on-first-login. `password` must be at least 8 characters (a floor, not a policy). 409 on duplicate email. Response is the serialized `User` entity — no `locked` field (a brand-new account is never locked; `locked` is only computed on the two `GET` routes above). |
 | PATCH | `/users/:id` | `{ name?, email?, role? }` | Name/email/role only — never password. 409 on duplicate email. 409 (BR-075) when the change would demote the last active Owner. Response has no `locked` field, same reason as `POST` above — re-fetch via `GET` to see current lock status. |

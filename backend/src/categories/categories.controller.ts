@@ -9,12 +9,14 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { CurrentUserId } from '../common/decorators/current-user-id.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../common/enums/user-role.enum';
 import { CategoriesService } from './categories.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
+import { QueryCategoriesDto } from './dto/query-categories.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 
 // @Controller('categories') means every route method below is mounted under
@@ -29,9 +31,12 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
 export class CategoriesController {
   constructor(private readonly categoriesService: CategoriesService) {}
 
+  // Phase 14: `?page=&pageSize=` is optional — with either, the service returns
+  // `{ items, page, pageSize, total }`; with neither (the reference-cache path), the
+  // bare array.
   @Get()
-  findAll() {
-    return this.categoriesService.findAll();
+  findAll(@Query() query: QueryCategoriesDto) {
+    return this.categoriesService.findAll(query);
   }
 
   @Roles(UserRole.Owner)
@@ -53,7 +58,10 @@ export class CategoriesController {
   @Roles(UserRole.Owner)
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT) // a successful DELETE returns no body — 204, not 200
-  remove(@Param('id', ParseIntPipe) id: number, @CurrentUserId() actorId: number) {
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUserId() actorId: number,
+  ) {
     return this.categoriesService.remove(id, actorId);
   }
 }

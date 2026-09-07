@@ -4,6 +4,7 @@
 // (catChip reads categories).
 
 import { getCategory } from './reference-data.js';
+import { pagerModel } from './pager.js';
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -167,5 +168,25 @@ export const UI = {
   // docs/phase-11-plan.md §7.
   truncationNotice(count, noun, hint){
     return `<div class="inline-notice info" style="margin-bottom:14px">${UI.icon('history')}<div>Showing the most recent ${count} ${UI.esc(noun)}. ${UI.esc(hint)}</div></div>`;
+  },
+
+  // Phase 14 (docs/phase-14-plan.md §3 Fork F): the sibling of truncationNotice —
+  // one helper, every list screen calls it, so a fifth paged screen cannot word it
+  // differently or forget it. Renders below the table:
+  //
+  //   ‹ Prev        Page 3 of 12 · 573 products        Next ›
+  //
+  // Returns '' when the whole result fits on one page (pagerModel's `showPager`).
+  // The Prev/Next <button>s carry no inline handler — each view wires
+  // `[data-pager]` in its own attach(), the Phase 13 invariant. `noun` varies per
+  // screen ("products" / "suppliers" / …), like truncationNotice's.
+  pager({ page, pageSize, total, noun }){
+    const m = pagerModel(page, pageSize, total);
+    if (!m.showPager) return '';
+    return `<div class="pager">
+      <button class="btn btn-secondary btn-sm" data-pager="prev" ${m.hasPrev ? '' : 'disabled'}>‹ Prev</button>
+      <span class="pager-status">${m.label} · ${total} ${UI.esc(noun)}</span>
+      <button class="btn btn-secondary btn-sm" data-pager="next" ${m.hasNext ? '' : 'disabled'}>Next ›</button>
+    </div>`;
   },
 };

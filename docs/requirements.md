@@ -164,6 +164,25 @@ it runs the suite that already exists. The only files that changed are `.github/
 `.nvmrc`, `backend/package.json`'s new `engines` field, `tools/create-test-databases.mjs`,
 and documentation.
 
+## Catalogue Paging (Phase 14 — no new FR)
+
+Phase 14 (`docs/phase-14-plan.md`) gave the four catalogue list screens
+(`/products`, `/suppliers`, `/categories`, `/users`) a real paging design — a page, a
+page size, a total, and Prev/Next on the screen — and moved the Product List's
+low/out-of-stock filter into SQL. Like Phases 7, 8, 10, 11, and 15, this adds no new
+FR — the sixth such note, and the closest kin of Phase 11's: paging is transport plus
+a small screen affordance ("Page 3 of 12 · 573 products" with a Prev/Next control), not
+a user goal in `product.md` §4, and no Owner opens a screen to interact with "which
+50 rows".
+
+**FR-004 uses the word "all" — "view *all* products with current stock and status" —
+and, exactly as with FR-030/031's "all" in Phase 11's note above, the honest reading
+is that "all" names the *screen's subject*, not one HTTP response's payload.** A
+Product List that shows 50 rows with a total and a Prev/Next still lets a user view the
+list of all products — it was never a promise that a single response carries every row.
+Recorded here with its reasoning, the one place a reader could think Phase 14 broke a
+Must. (Numbered before Phase 15 but landed after it — the CI pipeline was built first.)
+
 ## Cross-Reference Summary
 
 ```

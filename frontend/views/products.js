@@ -11,19 +11,35 @@ export function productList(container, query){
   let status = query.get('status') || 'all'; // all | active | inactive | low | out
   let category = query.get('category') || '';
   let override = 'normal';
+  // Phase 14 (docs/phase-14-plan.md §3): `page` state, reset to 1 on any search or
+  // filter change (a filtered result has its own page 1). PAGE_SIZE mirrors the
+  // backend's DEFAULT_PAGE_SIZE — the server would apply it anyway; sending it keeps
+  // the pager arithmetic and the request in step.
+  const PAGE_SIZE = 50;
+  let page = 1;
+  let total = 0;
 
   function load(){
     container.innerHTML = header() + toolbar() + `<div class="table-wrap"><table class="data-table"><tbody>${UI.skeletonRows(6,6)}</tbody></table></div>`;
     attachHeaderHandlers();
     UI.mockFetch(() => {
-      if (override === 'empty') return [];
+      if (override === 'empty') return { items: [], total: 0, page: 1 };
       // low/out used to be filtered client-side after fetching everything; the API's
       // ?status= now accepts them directly (ProductsService.findAll), so the server
-      // does the filtering instead of the browser.
-      return Store.listProducts({ search, category: category || undefined, status: status === 'all' ? undefined : status });
+      // does the filtering — and, as of Phase 14, the paging — instead of the browser.
+      return Store.listProducts({ search, category: category || undefined, status: status === 'all' ? undefined : status, page, pageSize: PAGE_SIZE });
     }, { forceState: override === 'error' ? 'error' : null })
-      .then(list => { container.innerHTML = header() + toolbar() + body(list); attachAll(); })
+      .then(result => {
+        total = result.total;
+        page = result.page;
+        container.innerHTML = header() + toolbar() + body(result.items) + pagerHtml();
+        attachAll();
+      })
       .catch(err => { container.innerHTML = header() + toolbar() + UI.errorState(err.message, 'retry'); attachAll(); });
+  }
+
+  function pagerHtml(){
+    return UI.pager({ page, pageSize: PAGE_SIZE, total, noun: 'products' });
   }
 
   function header(){
@@ -76,22 +92,28 @@ export function productList(container, query){
 
   function attachHeaderHandlers(){
     const s = container.querySelector('#pl-status');
-    if (s) s.addEventListener('change', e => { status = e.target.value; load(); });
+    if (s) s.addEventListener('change', e => { status = e.target.value; page = 1; load(); });
     const c = container.querySelector('#pl-category');
-    if (c) c.addEventListener('change', e => { category = e.target.value; load(); });
+    if (c) c.addEventListener('change', e => { category = e.target.value; page = 1; load(); });
     const p = container.querySelector('#preview-select');
-    if (p) p.addEventListener('change', e => { override = e.target.value; load(); });
+    if (p) p.addEventListener('change', e => { override = e.target.value; page = 1; load(); });
   }
 
   function attachAll(){
     attachHeaderHandlers();
     const searchInput = container.querySelector('#pl-search');
     if (searchInput){
-      searchInput.addEventListener('input', e => { search = e.target.value; load(); });
+      searchInput.addEventListener('input', e => { search = e.target.value; page = 1; load(); });
       searchInput.focus();
       const val = searchInput.value; searchInput.value = ''; searchInput.value = val;
     }
     container.querySelectorAll('[data-goto]').forEach(row => row.addEventListener('click', () => UI.navigate(row.dataset.goto)));
+    // Phase 14: the pager's Prev/Next carry no inline handler (§3) — wired here.
+    container.querySelectorAll('[data-pager]').forEach(btn => btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      page += btn.dataset.pager === 'next' ? 1 : -1;
+      load();
+    }));
     const retry = container.querySelector('#retry');
     if (retry) retry.addEventListener('click', () => { override = 'normal'; load(); });
   }

@@ -16,8 +16,10 @@ docs/            Product, requirements, business rules, domain model, API docs, 
 tools/           Portable local PostgreSQL (see tools/README.md) — dev database
 backend/         NestJS API (Phase 2)
 frontend/        Static UI — index.html shell + styles.css + a graph of ES modules
-                 (config/session/reference-data/ui/api/router/main + views/), served
-                 by serve.js. No framework, no build step (Phase 13)
+                 (config/session/reference-data/ui/api/router/main + views/ + pager),
+                 served by serve.js. No framework, no build step (Phase 13). A
+                 package.json + test/ was added in Phase 14 for `npm test` only —
+                 the app itself still installs nothing.
 ```
 
 ## Running it locally
@@ -102,9 +104,11 @@ cd frontend
 node serve.js
 ```
 
-Open `http://localhost:5173`. **Running the frontend did not change in Phase 13** —
-`serve.js` is byte-for-byte the same, it just serves several static files now instead
-of one. No `npm install`, no build, no `node_modules` under `frontend/`.
+Open `http://localhost:5173`. **Running the frontend still needs nothing installed** —
+`serve.js` is byte-for-byte the same and serves static files. Phase 14 added a
+`frontend/package.json` and a `frontend/node_modules`, but those are **for the test
+harness only** (`npm test` — see below); `node serve.js` uses neither, and there is
+still no build step.
 
 ## Tests
 
@@ -114,7 +118,16 @@ npm test        # unit + integration (needs Postgres running)
 npm run test:e2e  # end-to-end (needs Postgres running)
 ```
 
+```
+cd frontend
+npm install     # once — pulls jsdom, the only devDependency
+npm test        # node --test: the paging logic (Phase 14, Fork G)
+```
+
 See `docs/learning-notes/testing-strategy.md` for what each of these actually proves.
+The frontend suite is the first one it has — `pager.test.js` covers the pure pager
+arithmetic, `products-list.test.js` (jsdom) covers the reset-to-page-1-on-filter
+behaviour.
 
 **The two test databases** (`smart_inventory_test` for integration, `smart_inventory_e2e`
 for e2e) are separate from the dev `smart_inventory`, and the local setup for them was
@@ -136,8 +149,8 @@ it needs `migration:run` once, and again after any new migration.
 ## Continuous integration
 
 `.github/workflows/ci.yml` (Phase 15, `docs/phase-15-plan.md`) runs on every push and
-every pull request against `develop`, plus a manual trigger. Three jobs, each on a
-clean `postgres:17` service container where it needs a database:
+every pull request against `develop`, plus a manual trigger. Four jobs (Phase 14 added
+the last), each on a clean `postgres:17` service container where it needs a database:
 
 - **`lint`** — `nest build` (the typecheck, blocking) plus `npm run lint` as a
   non-blocking informational step (the script is `eslint --fix`, and the tree has
@@ -145,6 +158,8 @@ clean `postgres:17` service container where it needs a database:
 - **`test`** — creates `smart_inventory_test`, runs `npm test` (unit + integration).
 - **`e2e`** — creates `smart_inventory_e2e`, runs the **whole migration chain from
   empty**, then `npm run test:e2e`. Nothing else exercises the migrations from scratch.
+- **`frontend`** (Phase 14) — no database; `npm ci` then `npm test` (`node --test`)
+  over the paging logic.
 
 It uses no secrets — every value is a throwaway dev default. **CI is not yet a required
 check**: a red run does not block a push (that's a repository setting, deferred until
@@ -154,7 +169,27 @@ See `docs/learning-notes/ci-and-environments.md`.
 
 ## Current phase
 
-Phase 15 — Continuous integration (`docs/phase-15-plan.md`): a CI pipeline
+Phase 14 — Catalogue paging (`docs/phase-14-plan.md`): the four catalogue list screens
+(`/products`, `/suppliers`, `/categories`, `/users`) get a real paging design — a page,
+a page size, a total, and Prev/Next on the screen. The routes gain an **optional**
+`?page=&pageSize=`: supplied, the response is `{ items, page, pageSize, total }`;
+omitted, it is the bare array exactly as before — the shape the stock/adjustment wizard
+pickers and the `CATEGORIES` reference cache still rely on, so those are untouched.
+`ProductsService.findAll` is rewritten to compute current stock in SQL, so
+`?status=low`/`out` is a real `WHERE` clause and pages the low-stock set instead of
+taking 50 products by name and then filtering. **The Product List showing 50 rows with
+Prev/Next is the feature, not a truncated query** — the total is on the pager and the
+other pages are one click away. The frontend gets its first automated test
+(`frontend/package.json`, `frontend/test/`, `npm test` → `node --test`); `serve.js` is
+still **byte-for-byte unchanged** and running the app still needs no `npm install`.
+**No migration this phase** (unlike Phases 11 and 12) — it is a query rewrite plus
+additive query params, so there is no `migration:run` step after pulling it. No new FR,
+BR, entity, route, or domain document change. See `docs/architecture-observations.md`'s
+Phase 14 section for the unbounded-catalogue-reads precondition it *partly* retires (the
+pickers still fetch every row), the offset-over-keyset call, and the envelope/header
+asymmetry. *(Numbered before Phase 15 but implemented after it — CI shipped first.)*
+
+Earlier phases: Phase 15 — Continuous integration (`docs/phase-15-plan.md`): a CI pipeline
 (`.github/workflows/ci.yml`) that runs lint, the unit + integration suite, and the e2e
 suite against a clean `postgres:17` on every push and pull request. **No application
 code, no test, no migration changed** — it runs the suite that already existed. It also
@@ -167,9 +202,6 @@ empty database. A Node version is pinned (`.nvmrc` = `24`, `backend/package.json
 change. See `docs/architecture-observations.md`'s Phase 15 section for the preconditions
 it named (including a pre-existing lint-cleanliness gap it surfaced) and what it
 deliberately left out (branch protection, a deploy pipeline).
-
-*(Phase 14 — catalogue paging — is written up in `docs/phase-14-plan.md` but not yet
-implemented; Phase 15 is independent of it and shipped first.)*
 
 Earlier phases: Phase 13 — Frontend restructuring (`docs/phase-13-plan.md`): a **pure
 frontend restructuring, no behaviour change, no new dependency**. `frontend/index.html` was a

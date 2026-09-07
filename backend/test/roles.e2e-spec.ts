@@ -317,6 +317,31 @@ describe('Roles / authorization (e2e)', () => {
     expect(dashboard.status).toBe(200);
   });
 
+  // Phase 14 (docs/phase-14-plan.md §5): adding `?page=&pageSize=` does not move the
+  // gate on any of the four catalogue reads. `/users` is the one that is Owner-only,
+  // and it stays Owner-only with the params present; `/products` stays open to Staff.
+  it('GET /users?page=&pageSize= is still Owner-only (403 Staff, 200 Owner)', async () => {
+    const staffAttempt = await asStaff(
+      request(app.getHttpServer()).get('/users?page=1&pageSize=2'),
+    );
+    expect(staffAttempt.status).toBe(403);
+
+    const ownerAttempt = await asOwner(
+      request(app.getHttpServer()).get('/users?page=1&pageSize=2'),
+    );
+    expect(ownerAttempt.status).toBe(200);
+    expect(ownerAttempt.body).toMatchObject({ page: 1, pageSize: 2 });
+    expect(Array.isArray(ownerAttempt.body.items)).toBe(true);
+  });
+
+  it('GET /products?page=&pageSize= stays open to Staff', async () => {
+    const res = await asStaff(
+      request(app.getHttpServer()).get('/products?page=1&pageSize=5'),
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ page: 1, pageSize: 5 });
+  });
+
   it('a 403 response body carries the Owner-role message, not a generic "Forbidden resource"', async () => {
     const res = await asStaff(
       request(app.getHttpServer()).post('/products'),

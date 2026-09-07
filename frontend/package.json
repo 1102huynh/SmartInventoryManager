@@ -1,0 +1,12 @@
+{
+  "name": "frontend",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Smart Inventory Manager frontend — static ES modules served by serve.js, no build step (Phase 13). Phase 14 (Fork G) adds this file for the first automated test: `npm test` runs node's built-in runner over the paging logic. No bundler, no framework, one devDependency (jsdom) for the single DOM test.",
+  "scripts": {
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1"
+  }
+}

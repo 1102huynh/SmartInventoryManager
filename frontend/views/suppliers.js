@@ -8,14 +8,29 @@ export function supplierList(container, query){
   let search = '';
   let status = '';
   let override = 'normal';
+  // Phase 14 (docs/phase-14-plan.md §3): page state, reset to 1 on any search/filter change.
+  const PAGE_SIZE = 50;
+  let page = 1;
+  let total = 0;
 
   function load(){
     container.innerHTML = header() + toolbar() + `<div class="table-wrap"><table class="data-table"><tbody>${UI.skeletonRows(4,4)}</tbody></table></div>`;
     attachHeaderHandlers();
-    UI.mockFetch(() => override === 'empty' ? [] : Store.listSuppliers({ search, status: status || undefined }),
+    UI.mockFetch(() => override === 'empty'
+        ? { items: [], total: 0, page: 1 }
+        : Store.listSuppliers({ search, status: status || undefined, page, pageSize: PAGE_SIZE }),
       { forceState: override === 'error' ? 'error' : null })
-      .then(list => { container.innerHTML = header() + toolbar() + body(list); attachAll(); })
+      .then(result => {
+        total = result.total;
+        page = result.page;
+        container.innerHTML = header() + toolbar() + body(result.items) + pagerHtml();
+        attachAll();
+      })
       .catch(err => { container.innerHTML = header() + toolbar() + UI.errorState(err.message, 'retry'); attachAll(); });
+  }
+
+  function pagerHtml(){
+    return UI.pager({ page, pageSize: PAGE_SIZE, total, noun: 'suppliers' });
   }
 
   function header(){
@@ -47,14 +62,19 @@ export function supplierList(container, query){
       </tr>`).join('')}</tbody></table></div>`;
   }
   function attachHeaderHandlers(){
-    const s = container.querySelector('#sl-status'); if (s) s.addEventListener('change', e => { status = e.target.value; load(); });
-    const p = container.querySelector('#preview-select'); if (p) p.addEventListener('change', e => { override = e.target.value; load(); });
+    const s = container.querySelector('#sl-status'); if (s) s.addEventListener('change', e => { status = e.target.value; page = 1; load(); });
+    const p = container.querySelector('#preview-select'); if (p) p.addEventListener('change', e => { override = e.target.value; page = 1; load(); });
   }
   function attachAll(){
     attachHeaderHandlers();
     const search_ = container.querySelector('#sl-search');
-    if (search_){ search_.addEventListener('input', e => { search = e.target.value; load(); }); search_.focus(); const v = search_.value; search_.value=''; search_.value=v; }
+    if (search_){ search_.addEventListener('input', e => { search = e.target.value; page = 1; load(); }); search_.focus(); const v = search_.value; search_.value=''; search_.value=v; }
     container.querySelectorAll('[data-goto]').forEach(row => row.addEventListener('click', () => UI.navigate(row.dataset.goto)));
+    container.querySelectorAll('[data-pager]').forEach(btn => btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      page += btn.dataset.pager === 'next' ? 1 : -1;
+      load();
+    }));
     const retry = container.querySelector('#retry'); if (retry) retry.addEventListener('click', () => { override='normal'; load(); });
   }
   load();

@@ -10,13 +10,26 @@ import { Store } from '../api.js';
 // happens inline, right on this list, the same confirm-then-confirm pattern
 // Views.supplierDetail uses for its own toggle.
 export function userList(container, query){
-  let users = [];
+  let users = []; // Phase 14: the current page's rows
   let confirmToggleId = null;
+  // Phase 14 (docs/phase-14-plan.md §3): the User List is paged like the other three
+  // catalogue screens — no filters here, so `page` only moves via the pager.
+  const PAGE_SIZE = 50;
+  let page = 1;
+  let total = 0;
 
   function load(){
     container.innerHTML = header() + `<div class="table-wrap"><table class="data-table"><tbody>${UI.skeletonRows(4,4)}</tbody></table></div>`;
-    Store.getUsers().then(list => { users = list; render(); })
-      .catch(err => { container.innerHTML = header() + UI.errorState(err.message, 'retry'); attachHeaderOnly(); });
+    Store.getUsers({ page, pageSize: PAGE_SIZE }).then(result => {
+      users = result.items;
+      total = result.total;
+      page = result.page;
+      render();
+    }).catch(err => { container.innerHTML = header() + UI.errorState(err.message, 'retry'); attachHeaderOnly(); });
+  }
+
+  function pagerHtml(){
+    return UI.pager({ page, pageSize: PAGE_SIZE, total, noun: 'users' });
   }
 
   function header(){
@@ -65,7 +78,7 @@ export function userList(container, query){
   }
 
   function render(){
-    container.innerHTML = header() + body();
+    container.innerHTML = header() + body() + pagerHtml();
     attach();
   }
 
@@ -92,6 +105,12 @@ export function userList(container, query){
           return load();
         })
         .catch(err => { UI.toast(err.message, 'error'); confirmToggleId = null; render(); });
+    }));
+    // Phase 14: pager Prev/Next (no inline handler — §3).
+    container.querySelectorAll('[data-pager]').forEach(btn => btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      page += btn.dataset.pager === 'next' ? 1 : -1;
+      load();
     }));
     attachHeaderOnly();
   }

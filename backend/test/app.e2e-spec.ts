@@ -445,15 +445,14 @@ describe('Smart Inventory Manager API (e2e)', () => {
       // 6 products, 2 of them low-stock (stock 2, threshold 5); the rest normal.
       await seedProducts(6);
       const list = await auth(request(app.getHttpServer()).get('/products'));
-      const ids: number[] = list.body.map((p: { id: number }) => p.id);
-      for (const id of ids.slice(0, 2)) {
-        await auth(request(app.getHttpServer()).post(`/products/${id}/stock-in`))
-          .send({ quantity: 2, occurredAt: '2026-08-01' })
-          .expect(201);
-      }
-      for (const id of ids.slice(2)) {
-        await auth(request(app.getHttpServer()).post(`/products/${id}/stock-in`))
-          .send({ quantity: 50, occurredAt: '2026-08-01' })
+      const rows = list.body as Array<{ id: number }>;
+      const ids = rows.map((p) => p.id);
+      for (const [i, id] of ids.entries()) {
+        const quantity = i < 2 ? 2 : 50; // first two → low stock, rest → normal
+        await auth(
+          request(app.getHttpServer()).post(`/products/${id}/stock-in`),
+        )
+          .send({ quantity, occurredAt: '2026-08-01' })
           .expect(201);
       }
 

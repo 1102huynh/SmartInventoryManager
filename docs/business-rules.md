@@ -306,6 +306,19 @@ environment on every push. It enforces nothing about the business — it enforce
 the code enforcing the business still passes its own tests. No rule here is added,
 amended, or reinterpreted; no application code changes at all.
 
+**[2026-09-07, Phase 14]** No new BR — the fifth such line, and the direct sibling of
+Phase 11's. `docs/phase-14-plan.md` gives the four catalogue list reads (`/products`,
+`/suppliers`, `/categories`, `/users`) an optional `page`/`pageSize` and a paged
+envelope. A paging window is a property of a read, not a rule about the business:
+BR-060/061 (low stock), BR-002 (product status), and BR-070–074 (who may read what)
+all say exactly what they said before. The Fork B rewrite of `ProductsService.findAll`
+— computing current stock in SQL so `low`/`out` are `WHERE` clauses — changes how the
+answer is computed, not what it is; BR-040/042's "current stock is `SUM(quantity_delta)`,
+never a stored column" is untouched (the value is still summed on read, just in the
+same query now). `requirements.md`'s Phase 14 note carries the FR-004 "all" reading,
+the counterpart to Phase 11's FR-030/031 note. (Landed after Phase 15 in wall-clock —
+CI was built first — but numbered before it.)
+
 ## Adjustment Approval
 
 - **BR-085** [Decided 2026-09-03, Phase 12] — **A Staff-initiated adjustment is a

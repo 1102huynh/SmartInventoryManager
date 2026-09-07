@@ -1,4 +1,3 @@
-import { getCategories, getCategory } from '../reference-data.js';
 import { UI } from '../ui.js';
 import { Store } from '../api.js';
 
@@ -13,17 +12,39 @@ import { Store } from '../api.js';
 // navigation than the entity is worth.
 export function categoryList(container, query){
   let products = []; // used only to compute each category's product count client-side
+  let categories = []; // Phase 14: the current page's rows (server-ordered by name)
   let editingId = null;
   let editValue = '';
   let editError = '';
   let confirmDeleteId = null;
   let newName = '';
   let addError = '';
+  // Phase 14 (docs/phase-14-plan.md §3): this screen now reads a *page* of categories
+  // via Store.listCategoriesPaged — not the global CATEGORIES cache, which
+  // loadReferenceData still fills unpaged for every product form's dropdown. The
+  // product-count read (Store.listProducts, no paging param) stays a whole-catalogue
+  // fetch; that read is one of the §1 "second consumer" callers the optional-paging
+  // design protects.
+  const PAGE_SIZE = 50;
+  let page = 1;
+  let total = 0;
 
   function load(){
     container.innerHTML = header() + `<div class="table-wrap"><table class="data-table"><tbody>${UI.skeletonRows(3,4)}</tbody></table></div>`;
-    Store.listProducts().then(list => { products = list; render(); })
-      .catch(err => { container.innerHTML = header() + UI.errorState(err.message, 'retry'); container.querySelector('#retry')?.addEventListener('click', load); });
+    Promise.all([
+      Store.listProducts(),
+      Store.listCategoriesPaged({ page, pageSize: PAGE_SIZE }),
+    ]).then(([productList, catPage]) => {
+      products = productList;
+      categories = catPage.items;
+      total = catPage.total;
+      page = catPage.page;
+      render();
+    }).catch(err => { container.innerHTML = header() + UI.errorState(err.message, 'retry'); container.querySelector('#retry')?.addEventListener('click', load); });
+  }
+
+  function pagerHtml(){
+    return UI.pager({ page, pageSize: PAGE_SIZE, total, noun: 'categories' });
   }
 
   function header(){
@@ -98,8 +119,8 @@ export function categoryList(container, query){
   }
 
   function render(){
-    const sorted = [...getCategories()].sort((a, b) => a.name.localeCompare(b.name));
-    container.innerHTML = header() + addFormHtml() + body(sorted);
+    // `categories` is already the server's name-ordered page — no client-side sort.
+    container.innerHTML = header() + addFormHtml() + body(categories) + pagerHtml();
     attach();
   }
 
@@ -111,13 +132,15 @@ export function categoryList(container, query){
       Store.createCategory({ name: newName }).then(() => {
         UI.toast('Category created.', 'success');
         newName = ''; addError = '';
-        render();
+        return load(); // Phase 14: re-fetch the page — the new row may belong on it
       }).catch(err => { addError = err.message; render(); });
     });
 
     container.querySelectorAll('[data-start-edit]').forEach(btn => btn.addEventListener('click', () => {
       const id = Number(btn.dataset.startEdit);
-      editingId = id; editValue = getCategory(id).name; editError = '';
+      editingId = id;
+      editValue = categories.find(c => c.id === id)?.name || '';
+      editError = '';
       render();
       container.querySelector(`#edit-name-${id}`)?.focus();
     }));
@@ -132,7 +155,7 @@ export function categoryList(container, query){
       Store.updateCategory(id, { name: value }).then(() => {
         UI.toast('Category renamed.', 'success');
         editingId = null; editError = '';
-        render();
+        return load(); // Phase 14: the rename can change name-order / page membership
       }).catch(err => { editError = err.message; editValue = value; render(); });
     }));
 
@@ -144,12 +167,22 @@ export function categoryList(container, query){
     }));
     container.querySelectorAll('[data-do-delete]').forEach(btn => btn.addEventListener('click', () => {
       const id = Number(btn.dataset.doDelete);
-      const name = getCategory(id)?.name || 'Category';
+      const name = categories.find(c => c.id === id)?.name || 'Category';
       Store.deleteCategory(id).then(() => {
         UI.toast(`${name} deleted.`, 'success');
         confirmDeleteId = null;
+        // A delete can leave the current page past the end (e.g. the only row on the
+        // last page) — step back one if this page is now empty.
+        if (categories.length === 1 && page > 1) page -= 1;
         return load(); // re-fetch products too — a deleted category may have just orphaned some
       }).catch(err => { UI.toast(err.message, 'error'); confirmDeleteId = null; render(); });
+    }));
+
+    // Phase 14: pager Prev/Next (no inline handler — §3).
+    container.querySelectorAll('[data-pager]').forEach(btn => btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      page += btn.dataset.pager === 'next' ? 1 : -1;
+      load();
     }));
 
     const retry = container.querySelector('#retry');

@@ -152,11 +152,31 @@ export const Store = {
       .then(() => this.loadReferenceData());
   },
 
-  listProducts({ search, status, category } = {}){
+  // Phase 14 (docs/phase-14-plan.md §3): the paged read for the Categories admin
+  // screen. Separate from `loadReferenceData` above on purpose — that one stays a
+  // bare `GET /categories` with no params, feeding the global `CATEGORIES` cache
+  // every product form's dropdown reads. This one always sends `page`/`pageSize` and
+  // returns the `{ items, page, pageSize, total }` envelope.
+  listCategoriesPaged({ page, pageSize } = {}){
+    const q = new URLSearchParams();
+    if (page) q.set('page', page);
+    if (pageSize) q.set('pageSize', pageSize);
+    const qs = q.toString();
+    return this._request('GET', '/categories' + (qs ? '?' + qs : ''));
+  },
+
+  // Phase 14 (docs/phase-14-plan.md §3): `page`/`pageSize` are optional. Supplied, the
+  // API answers with a `{ items, page, pageSize, total }` envelope and this returns it
+  // as-is (the caller asked for a page, so it knows to read `.items`). Omitted — the
+  // category screen's product-count read, the History screen's product filter — the
+  // response is the bare array, unchanged.
+  listProducts({ search, status, category, page, pageSize } = {}){
     const q = new URLSearchParams();
     if (search) q.set('search', search);
     if (status) q.set('status', status);
     if (category) q.set('categoryId', category);
+    if (page) q.set('page', page);
+    if (pageSize) q.set('pageSize', pageSize);
     const qs = q.toString();
     return this._request('GET', '/products' + (qs ? '?' + qs : ''));
   },
@@ -185,10 +205,15 @@ export const Store = {
   setProductStatus(id, status){ return this._request('PATCH', `/products/${id}/status`, { status }); },
   deleteProduct(id){ return this._request('DELETE', `/products/${id}`); },
 
-  listSuppliers({ status, search } = {}){
+  // Phase 14: `page`/`pageSize` optional — same shape rule as listProducts. The
+  // stock-in wizard's supplier picker calls this with `{ status: 'active' }` and no
+  // paging param, so it keeps getting the bare array of every active supplier.
+  listSuppliers({ status, search, page, pageSize } = {}){
     const q = new URLSearchParams();
     if (status) q.set('status', status);
     if (search) q.set('search', search);
+    if (page) q.set('page', page);
+    if (pageSize) q.set('pageSize', pageSize);
     const qs = q.toString();
     return this._request('GET', '/suppliers' + (qs ? '?' + qs : ''));
   },
@@ -215,7 +240,16 @@ export const Store = {
   // (UsersController's class-level @Roles(UserRole.Owner)) is the actual enforcement
   // point, same as every other role gate in this app; the frontend only avoids
   // offering actions that would 403.
-  getUsers(){ return this._request('GET', '/users'); },
+  // Phase 14: `page`/`pageSize` optional. The User List is the only caller and always
+  // pages; passing neither still yields the bare array (kept for parity with the
+  // other three catalogue reads — there is no non-screen consumer here).
+  getUsers({ page, pageSize } = {}){
+    const q = new URLSearchParams();
+    if (page) q.set('page', page);
+    if (pageSize) q.set('pageSize', pageSize);
+    const qs = q.toString();
+    return this._request('GET', '/users' + (qs ? '?' + qs : ''));
+  },
   getUserById(id){ return this._request('GET', `/users/${id}`); },
   createUser(data){
     return this._request('POST', '/users', {

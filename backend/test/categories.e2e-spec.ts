@@ -231,7 +231,8 @@ describe('Categories (e2e)', () => {
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body)).toBe(false);
       expect(res.body).toMatchObject({ page: 1, pageSize: 4, total: 6 });
-      expect(res.body.items.map((c: { name: string }) => c.name)).toEqual([
+      const items = res.body.items as Array<{ name: string }>;
+      expect(items.map((c) => c.name)).toEqual([
         'Category 00',
         'Category 01',
         'Category 02',

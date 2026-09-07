@@ -12,11 +12,7 @@ import { AuditEntityType } from '../common/enums/audit-entity-type.enum';
 import { AuditEventType } from '../common/enums/audit-event-type.enum';
 import { EntityStatus } from '../common/enums/entity-status.enum';
 import { InventoryService } from '../inventory/inventory.service';
-import {
-  Paged,
-  pageEnvelope,
-  resolvePaging,
-} from '../common/pagination';
+import { Paged, pageEnvelope, resolvePaging } from '../common/pagination';
 import { InventoryTransaction } from '../inventory/inventory-transaction.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { QueryProductsDto } from './dto/query-products.dto';
@@ -31,6 +27,13 @@ export interface ProductWithStock extends Product {
   currentStock: number;
   lowStock: boolean;
   outOfStock: boolean;
+  hasHistory: boolean;
+}
+
+// The two computed columns `findAll`'s query adds via `addSelect`, read back off
+// `getRawAndEntities` (Phase 14, Fork B).
+interface RawStock {
+  currentStock: string | number | null;
   hasHistory: boolean;
 }
 
@@ -108,7 +111,7 @@ export class ProductsService {
 
     const paging = resolvePaging(query);
     if (!paging) {
-      const { entities, raw } = await qb.getRawAndEntities();
+      const { entities, raw } = await qb.getRawAndEntities<RawStock>();
       return this.mergeStock(entities, raw);
     }
     // Count the filtered set before the window is applied — `getCount` drops the
@@ -116,19 +119,18 @@ export class ProductsService {
     // WHERE, so `total` is the number of matches, not the page.
     const total = await qb.getCount();
     qb.offset(paging.skip).limit(paging.take);
-    const { entities, raw } = await qb.getRawAndEntities();
+    const { entities, raw } = await qb.getRawAndEntities<RawStock>();
     return pageEnvelope(this.mergeStock(entities, raw), total, paging);
   }
 
   // Re-attaches the in-query computed columns (index-aligned with the entities) onto
   // each Product, and derives `lowStock`/`outOfStock` from `currentStock` exactly as
-  // `attachStock` does for the single-product reads.
-  private mergeStock(
-    products: Product[],
-    raw: Array<Record<string, unknown>>,
-  ): ProductWithStock[] {
+  // `attachStock` does for the single-product reads. `currentStock` comes back from
+  // `pg` as a numeric string (COALESCE over a bigint SUM); `hasHistory` as a real
+  // boolean.
+  private mergeStock(products: Product[], raw: RawStock[]): ProductWithStock[] {
     return products.map((product, i) => {
-      const currentStock = parseInt(String(raw[i]?.currentStock ?? '0'), 10);
+      const currentStock = Number(raw[i]?.currentStock ?? 0);
       const hasHistory = raw[i]?.hasHistory === true;
       const lowStock =
         product.lowStockThreshold !== null &&

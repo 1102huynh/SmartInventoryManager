@@ -81,8 +81,7 @@ describe('ProductsService.findAll (integration, Phase 14)', () => {
     if (opts.stock !== undefined) {
       // `quantity_delta <> 0` is a CHECK constraint, so a net stock of 0 with history
       // is seeded as an offsetting pair (+1 then -1) rather than a single zero row.
-      const deltas =
-        opts.stock === 0 ? [1, -1] : [opts.stock];
+      const deltas = opts.stock === 0 ? [1, -1] : [opts.stock];
       await dataSource.getRepository(InventoryTransaction).save(
         deltas.map((d) => ({
           productId: product.id,

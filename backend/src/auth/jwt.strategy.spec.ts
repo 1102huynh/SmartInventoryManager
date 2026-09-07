@@ -2,7 +2,6 @@ import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EntityStatus } from '../common/enums/entity-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
-import { User } from '../users/user.entity';
 import { UsersService } from '../users/users.service';
 import { JwtStrategy } from './jwt.strategy';
 

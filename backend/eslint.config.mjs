@@ -44,6 +44,10 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-member-access': 'off',
       '@typescript-eslint/no-unsafe-return': 'off',
       '@typescript-eslint/no-unsafe-argument': 'off',
+      // Phase 16 (docs/phase-16-plan.md Fork B): the fifth `unsafe-*` sibling, off
+      // here for the same reason as the four above — `res.body.foo()` on a supertest
+      // response is a call on `any` by the nature of the boundary, not a bug.
+      '@typescript-eslint/no-unsafe-call': 'off',
     },
   },
 );

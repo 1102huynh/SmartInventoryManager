@@ -37,7 +37,8 @@ must satisfy.
 
 | ID | Name | Description | Priority | Notes / Assumptions |
 |---|---|---|---|---|
-| FR-021 | Record stock-out | User can record removal of a product: product, quantity, date, and optional reason. Decreases current stock; cannot exceed current stock. | Must | See BR-020–BR-022. Q-4: sale vs. generic removal |
+| FR-021 | Record stock-out | User can record removal of a product: product, quantity, date, and optional reason. Decreases current stock; cannot exceed current stock. | Must | See BR-020–BR-022. Q-4 resolved (Phase 18): the category is optional, see FR-025 |
+| FR-025 | Categorise a stock-out | User may optionally tag a stock-out with a reason category from a fixed set (`sale`, `internal_use`, `damaged`, `lost`, `expired`, `return`, `other`); `other` requires a free-text note. | Should | **Done** (Phase 18) — `reasonCategory?` on `POST /products/:id/stock-out`. See BR-023. Resolves `product.md` Q-4 in its lighter form (no `Sale`/`Order` entity). Numbered after the current-stock FRs, which predate it; kept in the Stock Out section by topic. |
 
 ## Inventory Management — Adjustment
 
@@ -208,11 +209,27 @@ Owner opens a screen to interact with "how the supplier field is populated". Thi
 what finishes the job Phase 14 §7 named — the pickers no longer fetch the whole
 catalogue — but the requirement it serves (FR-020's supplier selection) is untouched.
 
+## Stock-Out Reason Categories (Phase 18 — FR-025, a Should)
+
+Phase 18 (`docs/phase-18-plan.md`) resolves `product.md` Q-4 in its lighter form: a
+stock-out may carry an optional structured reason from a fixed seven-value set, stored
+as a real `reason_category` enum column on `inventory_transactions` (migration
+`1787930000000`). This is a genuine new capability with a route parameter, a UI
+picker, and a rule (BR-023) — the honest inverse of Phases 14–17's "no new FR" notes,
+recorded here the way FR-065 (Phase 9) and FR-066 (Phase 12) were: **FR-021 is
+unchanged** and still reads "…and optional reason" — a stock-out with no category is
+still valid, and every pre-Phase-18 row and API caller keeps working (the column is
+nullable, no default, no backfill). What is new is FR-025: the *option* to say which
+kind of stock-out it was. It adds no `Sale`/`Order` entity — "sale" is one value in an
+enum, with no customer and no price (Q-1). A full Sale entity stays Future
+(`product.md` §7).
+
 ## Cross-Reference Summary
 
 ```
 FR-020 (stock-in)      → BR-010, BR-011, BR-012, BR-013 → Inventory Transaction / Supplier
 FR-021 (stock-out)     → BR-020, BR-021, BR-022         → Inventory Transaction
+FR-025 (stock-out reason category) → BR-023             → Inventory Transaction
 FR-022 (adjustment)    → BR-030–BR-034; BR-072 (amended), BR-085–089 → Inventory Transaction / Adjustment Request
 FR-066 (adjustment approval) → BR-072 (amended), BR-085, BR-086, BR-087, BR-088, BR-089 → Adjustment Request
 FR-023/024 (current stock) → BR-040, BR-041, BR-042     → Product / Inventory Transaction

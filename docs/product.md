@@ -118,6 +118,11 @@ See `requirements.md` for the itemized functional requirements and their priorit
   itself has shipped (see Should Have above and Q-6); what stays Future is approval
   *generalized* beyond that one case — `docs/phase-12-plan.md` §7]
 - Pricing, sales, invoicing, and accounting integration
+- A first-class **Sale / Order entity** (customer, line items, per-sale price) [added
+  2026-09-07, Phase 18: Q-4 resolved toward the lighter form — a stock-out `sale`
+  reason category (FR-025). A full Sale entity would only be needed to record *who*
+  bought something or to itemise one outbound movement; **trigger** for revisiting is a
+  concrete request for either. See `docs/phase-18-plan.md` §7]
 - Reporting/analytics beyond the basic dashboard
 - Multi-currency support
 
@@ -168,8 +173,15 @@ These affect the UI mockup and should be resolved before or during that phase.
 - **Q-3 [Resolved 2026-08-19]**: Low-stock threshold is per-product only, no global
   fallback default. A product with no threshold set is simply never flagged low-stock
   (see BR-061).
-- **Q-4**: Should stock-out represent only internal/manual removal, or should it also model
-  a "sale" concept (customer, price)? This affects whether a Sale/Order entity is needed.
+- **Q-4 [Resolved 2026-09-07, Phase 18]**: In its lighter form — a stock-out carries an
+  optional **reason category** from a fixed set (`sale`, `internal_use`, `damaged`,
+  `lost`, `expired`, `return`, `other`), stored on the transaction row. "Sale" is one
+  value in that enum: no customer, no price (Q-1 resolved "no pricing"), no line items.
+  **No `Sale`/`Order` entity is needed** — one would only be justified by a real need to
+  record *who* bought something or to itemise a single outbound movement, and neither is
+  in scope (§8: no CRM, no POS). A full Sale/Order entity therefore stays Future (§7).
+  See FR-025, BR-023, `docs/phase-18-plan.md`. Recording the category is optional —
+  FR-021 (record a stock-out) is unchanged.
 - **Q-5 [Resolved 2026-08-20, Phase 4]**: Flat list — no hierarchy. `Category` has never
   had a `parentId`, and nothing about building CRUD (Phase 4) changed the argument for
   staying flat: a small business's product list doesn't need subcategories. See
@@ -262,3 +274,16 @@ These affect the UI mockup and should be resolved before or during that phase.
   count no longer read the whole catalogue), and resolves none of §10's open
   questions; Q-4 (sale concept) and Q-7 (multi-location) remain exactly as open as
   before, untouched since Phase 5.
+- **[Added 2026-09-07, Phase 18]** Structured stock-out reason categories
+  (`docs/phase-18-plan.md`, `requirements.md` FR-025 + Phase 18 note,
+  `business-rules.md` BR-023 + Phase 18 note, `domain-model.md` §3/§4/§6, `api.md`,
+  `docs/architecture-observations.md`'s Phase 18 section). A product-level edit in the
+  register of Phase 9's FR-065 and Phase 12's FR-066, not Phase 7/10/11/14–17's "no
+  new FR" shape: **§10's Q-4 is resolved** (toward the lighter form — an optional
+  `reasonCategory` enum on a stock-out, no `Sale`/`Order` entity), §5's use case 4
+  ("Staff records a stock-out when goods leave (sale, consumption, removal)") gains the
+  ability to record *which*, and §7's "Sale/Order entity" line gets a concrete revisit
+  trigger. §4 gains no user goal (the existing "record stock leaving quickly and
+  accurately" already covers it), and FR-021 is unchanged — the category is optional.
+  There **is** a migration this phase (`1787930000000-AddStockOutReasonCategory`),
+  unlike Phases 14–17. Q-7 (multi-location) remains open, untouched since Phase 5.

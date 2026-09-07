@@ -34,6 +34,10 @@ export function normalizeTx(t){
     delta: t.quantityDelta,
     date: new Date(t.occurredAt),
     reason: t.reason || '',
+    // Phase 18 (docs/phase-18-plan.md): a structured stock-out reason from a fixed set
+    // (see STOCK_OUT_REASONS in views/transactions.js). Null on stock-in/adjustment and
+    // on any stock-out recorded before Phase 18.
+    reasonCategory: t.reasonCategory || null,
     supplier: t.supplier || null,
     recordedBy: t.recordedBy || null,
     product: t.product || null,

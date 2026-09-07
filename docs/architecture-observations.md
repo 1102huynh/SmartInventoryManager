@@ -687,3 +687,43 @@ covered directly with jsdom (`frontend/test/typeahead.test.js`), not split into 
 core the way `pager.js` was (Phase 17 Fork C). Every listener is attached by the
 factory to an element it created — the Phase 13 "no inline `on*` handler" invariant,
 now also observed by a module that builds its own DOM.
+
+## Cross-cutting: a fourth enum column, and a nullable one with no backfill (Phase 18)
+
+Phase 18 (`docs/phase-18-plan.md`) resolves `product.md` Q-4 by adding
+`inventory_transactions.reason_category` — an optional structured "why did this stock
+leave" from a fixed seven-value set (FR-025, BR-023). It is the fourth per-table
+Postgres enum in the schema, after `inventory_transactions_type_enum` (InitSchema),
+`users_role_enum` (Phase 5), and `users_status_enum` (Phase 6), and it follows their
+`CREATE TYPE … AS ENUM(...)` shape exactly.
+
+**Two things make it a lighter migration than Phases 5, 6, 11, or 12's.** It is
+purely additive — one `CREATE TYPE`, one `ADD COLUMN`, one `ADD CONSTRAINT`, with a
+`down` that reverses all three — so a reviewer arriving from the Phase 10 converting
+migration or the Phase 12 table-creating one will find nothing to be careful about.
+And it is deliberately **nullable with no default and no backfill**, unlike
+`AddUserStatus`'s "backfill every row to `'active'`, then `SET NOT NULL`". A stock-out
+recorded before this phase, or one recorded without a category (FR-021 is unchanged —
+the reason has always been optional), genuinely has no category; `NULL` says exactly
+that, and there is nothing sensible to backfill it to. The consequence: no existing
+row, seed, integration fixture, or e2e expectation had to change, and the
+`InventoryTransaction` response shape is a strict superset of what it was.
+
+**The `@Check` is the BR-023 guard, and lives in three registries like the
+`occurred_at` index.** `type = 'stock_out' OR reason_category IS NULL` — a reason
+category is meaningful only on a stock-out — is written by hand in the
+`1787930000000` migration (name `CHK_inventory_transactions_reason_category_stock_out`)
+for dev/prod, and built from the entity's class-level `@Check` decorator in the
+`smart_inventory_test` database (`test-data-source.ts`, `synchronize: true`) under a
+generated `CHK_<hash>` name. The two are the same predicate under different names —
+the same expected, documented difference the `@Index(['occurredAt', 'id'])` comment
+describes for its DESC/ASC split. `InventoryService` never sets the column on a
+stock-in or adjustment insert, so the `@Check` is a backstop, not a load-bearing
+validation — proven by an integration test that raw-`INSERT`s a `stock_in` row with a
+category and asserts the database rejects it.
+
+**No read-path change.** Both history reads (`GET /products/:id/transactions`,
+`GET /inventory-transactions`) already `getMany()` full entities, so the new scalar
+column serialises onto every transaction response with no query-builder edit — in
+contrast to Phase 14's `productCount` / current-stock computed columns, which needed
+`getRawAndEntities` plumbing because they are not stored.

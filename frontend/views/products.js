@@ -205,9 +205,16 @@ export function productDetail(container, id){
   // t.supplier/t.recordedBy arrive pre-normalized (see normalizeTx) from the API's
   // joined relations — no separate Store.getSupplier/getUser lookups needed anymore.
   function historyRow(t){
+    // Phase 18: a stock-out shows its reason category (FR-025) with the note appended
+    // when present; adjustments / pre-Phase-18 stock-outs fall back to the note alone.
+    const label = t.reasonCategory ? UI.stockOutReason(t.reasonCategory) : '';
+    const reasonCell = label && t.reason
+      ? `${UI.esc(label)} <span class="cell-sub">— ${UI.esc(t.reason)}</span>`
+      : label ? UI.esc(label)
+      : t.reason ? UI.esc(t.reason) : '<span class="cell-sub">—</span>';
     const detail = t.type === 'stock-in'
       ? (t.supplier ? UI.esc(t.supplier.name) : '<span class="cell-sub">No supplier recorded</span>')
-      : (t.reason ? UI.esc(t.reason) : '<span class="cell-sub">—</span>');
+      : reasonCell;
     return `<tr>
       <td class="cell-sub">${UI.fmtDateTime(t.date)}</td>
       <td>${UI.typeBadge(t.type)}</td>

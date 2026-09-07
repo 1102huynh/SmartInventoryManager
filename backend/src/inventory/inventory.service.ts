@@ -8,6 +8,7 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { daysCutoffForDateColumn } from '../common/days-cutoff';
 import { EntityStatus } from '../common/enums/entity-status.enum';
+import { StockOutReason } from '../common/enums/stock-out-reason.enum';
 import { TransactionType } from '../common/enums/transaction-type.enum';
 import { BoundedResult, trimToLimit } from '../common/result-truncated.header';
 import { Product } from '../products/product.entity';
@@ -205,6 +206,7 @@ export class InventoryService {
         userId,
         supplierId: dto.supplierId ?? null,
         reason: null,
+        reasonCategory: null,
       });
     });
   }
@@ -237,6 +239,7 @@ export class InventoryService {
         userId,
         supplierId: null,
         reason: dto.reason ?? null,
+        reasonCategory: dto.reasonCategory ?? null,
       });
     });
   }
@@ -324,6 +327,7 @@ export class InventoryService {
       userId: params.userId,
       supplierId: null,
       reason: params.reason,
+      reasonCategory: null,
     });
   }
 
@@ -390,6 +394,7 @@ export class InventoryService {
       userId: number;
       supplierId: number | null;
       reason: string | null;
+      reasonCategory: StockOutReason | null;
     },
   ): Promise<InventoryTransaction> {
     const repo = manager.getRepository(InventoryTransaction);
@@ -401,6 +406,7 @@ export class InventoryService {
       recordedByUserId: values.userId,
       supplierId: values.supplierId,
       reason: values.reason,
+      reasonCategory: values.reasonCategory,
     });
     return repo.save(record);
   }

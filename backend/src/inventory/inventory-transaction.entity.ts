@@ -8,6 +8,7 @@ import {
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import { StockOutReason } from '../common/enums/stock-out-reason.enum';
 import { TransactionType } from '../common/enums/transaction-type.enum';
 import { Product } from '../products/product.entity';
 import { Supplier } from '../suppliers/supplier.entity';
@@ -18,9 +19,11 @@ import { User } from '../users/user.entity';
 // UPDATE/DELETE endpoint anywhere for this entity; a correction is always a *new* row
 // (a new Adjustment), never a change to an old one.
 //
-// The two @Check constraints below encode BR-050 directly in the schema, as a second
-// line of defense behind the service-layer validation: even a bug or a future direct
-// SQL script can't produce a row that violates these rules.
+// The type-specific @Check constraints below encode BR-050 / BR-032 / BR-023 directly
+// in the schema, as a second line of defense behind the service-layer validation:
+// even a bug or a future direct SQL script can't produce a row that violates these
+// rules (supplier only on stock-in, reason mandatory on adjustment, reason category
+// only on stock-out).
 //
 // Phase 11 (docs/phase-11-plan.md §1 "The index Phase 9 added and Phase 2 never did"):
 // the class-level @Index below is the composite both bounded log reads order by
@@ -39,6 +42,7 @@ import { User } from '../users/user.entity';
 @Check(`"quantity_delta" <> 0`)
 @Check(`type = 'stock_in' OR supplier_id IS NULL`) // supplier only makes sense on stock-in
 @Check(`type <> 'adjustment' OR (reason IS NOT NULL AND reason <> '')`) // BR-032
+@Check(`type = 'stock_out' OR reason_category IS NULL`) // BR-023: a reason category only makes sense on stock-out
 export class InventoryTransaction {
   @PrimaryGeneratedColumn()
   id: number;
@@ -91,6 +95,26 @@ export class InventoryTransaction {
 
   @Column({ type: 'text', nullable: true })
   reason: string | null;
+
+  // Phase 18 (docs/phase-18-plan.md, product.md Q-4): the *structured* counterpart to
+  // the free-text `reason` above — a fixed set of why-stock-left categories, only ever
+  // set on a stock_out row (the @Check above). Nullable and with no default: every
+  // stock-out recorded before Phase 18 stays NULL ("unspecified"), and picking a
+  // category stays optional (FR-021 unchanged; FR-025 adds the picker beside it).
+  //
+  // Like the `type` enum, this is its own per-table Postgres enum
+  // (inventory_transactions_reason_category_enum). The 1787930000000 migration creates
+  // it for dev/prod; the test database (test-data-source.ts, synchronize: true) builds
+  // it straight from this decorator — the same three-registries split the @Index
+  // comment above describes, and the reason the CHECK constraint's generated name in
+  // the test DB won't match the hand-written one in the migration.
+  @Column({
+    name: 'reason_category',
+    type: 'enum',
+    enum: StockOutReason,
+    nullable: true,
+  })
+  reasonCategory: StockOutReason | null;
 
   // Phase 10 (docs/phase-10-plan.md): timestamptz, not timestamp.
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })

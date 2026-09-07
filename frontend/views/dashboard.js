@@ -6,22 +6,14 @@ import { Store } from '../api.js';
 // FR-050: the dashboard has no data of its own — it composes counts and a recent
 // slice of transactions that already exist in Product/Inventory Transaction.
 export function dashboard(container, query){
-  let override = 'normal';
-
   function load(){
     container.innerHTML = skeletonHtml();
     // Phase 1 computed these six numbers from the local PRODUCTS/TRANSACTIONS
     // arrays; Phase 2 gets them pre-composed from one endpoint (GET
     // /dashboard/summary — see DashboardService), matching FR-050's own framing that
     // the dashboard owns no data of its own, it only reads what other modules hold.
-    UI.mockFetch(async () => {
-      if (override === 'empty'){
-        return { activeProductsCount: 0, inactiveProductsCount: 0, lowStockCount: 0, outOfStockCount: 0, transactionsLast7Days: 0, recentActivity: [], needsAttention: [] };
-      }
-      const summary = await Store.getDashboardSummary();
-      return { ...summary, recentActivity: summary.recentActivity.map(normalizeTx) };
-    }, { forceState: override === 'error' ? 'error' : null })
-      .then(data => { container.innerHTML = contentHtml(data); attach(); })
+    Store.getDashboardSummary()
+      .then(summary => { container.innerHTML = contentHtml({ ...summary, recentActivity: summary.recentActivity.map(normalizeTx) }); attach(); })
       .catch(err => { container.innerHTML = headerHtml() + UI.errorState(err.message, 'retry'); attach(); });
   }
 
@@ -35,7 +27,6 @@ export function dashboard(container, query){
   function headerHtml(){
     return `<div class="content-header">
         <div><h1>Dashboard</h1><div class="sub">A quick health check on inventory — stock levels, alerts, and recent activity.</div></div>
-        ${UI.previewControl(override)}
       </div>`;
   }
 
@@ -102,11 +93,9 @@ export function dashboard(container, query){
   }
 
   function attach(){
-    const sel = container.querySelector('#preview-select');
-    if (sel) sel.addEventListener('change', e => { override = e.target.value; load(); });
     container.querySelectorAll('[data-goto]').forEach(row => row.addEventListener('click', () => UI.navigate(row.dataset.goto)));
     const retry = container.querySelector('#retry');
-    if (retry) retry.addEventListener('click', () => { override = 'normal'; load(); });
+    if (retry) retry.addEventListener('click', load);
   }
 
   load();

@@ -22,7 +22,6 @@ export function approvals(container, query){
   let status = (query && query.get('status')) || 'pending';
   let productId = (query && query.get('productId')) || '';
   let days = '';
-  let override = 'normal';
   // { id, kind: 'reject'|'withdraw' } — the row currently showing an inline reason
   // prompt. Mandatory reason (§1), so there is a prompt rather than a bare button.
   let promptFor = null;
@@ -44,14 +43,11 @@ export function approvals(container, query){
   function load(){
     container.innerHTML = header() + toolbar() + `<div class="table-wrap"><table class="data-table"><tbody>${UI.skeletonRows(9,6)}</tbody></table></div>`;
     attachHeaderHandlers();
-    UI.mockFetch(async () => {
-      if (override === 'empty') return { items: [], truncated: false };
-      return Store.listAdjustmentRequests({
-        status: status || undefined,
-        productId: productId || undefined,
-        days: days ? Number(days) : undefined,
-      });
-    }, { forceState: override === 'error' ? 'error' : null })
+    Store.listAdjustmentRequests({
+      status: status || undefined,
+      productId: productId || undefined,
+      days: days ? Number(days) : undefined,
+    })
       .then(result => { container.innerHTML = header() + toolbar() + body(result.items, result.truncated); attachAll(); })
       .catch(err => { container.innerHTML = header() + toolbar() + UI.errorState(err.message, 'retry'); attachAll(); });
   }
@@ -75,15 +71,17 @@ export function approvals(container, query){
         <option value="90" ${days==='90'?'selected':''}>Last 90 days</option>
       </select>
       ${productId ? `<button type="button" class="btn btn-ghost btn-sm" id="ap-clear-product">Filtered to one product &times;</button>` : ''}
-      ${UI.previewControl(override)}
     </div>`;
   }
 
   function body(list, truncated){
     if (list.length === 0){
+      // The default pending view being empty means there's nothing waiting; any
+      // other status/product/time filter missing means the filter matched nothing.
+      const defaultView = status === 'pending' && !productId && !days;
       return UI.emptyState(
-        override === 'empty' ? 'Nothing to approve' : 'No matching requests',
-        override === 'empty'
+        defaultView ? 'Nothing to approve' : 'No matching requests',
+        defaultView
           ? 'When a staff member records an adjustment, it appears here for review.'
           : 'Try a different status or time range.',
       );
@@ -167,12 +165,11 @@ export function approvals(container, query){
     const s = container.querySelector('#ap-status'); if (s) s.addEventListener('change', e => { status = e.target.value; promptFor = null; load(); });
     const d = container.querySelector('#ap-days'); if (d) d.addEventListener('change', e => { days = e.target.value; load(); });
     const cp = container.querySelector('#ap-clear-product'); if (cp) cp.addEventListener('click', () => { productId = ''; load(); });
-    const pr = container.querySelector('#preview-select'); if (pr) pr.addEventListener('change', e => { override = e.target.value; load(); });
   }
 
   function attachAll(){
     attachHeaderHandlers();
-    const retry = container.querySelector('#retry'); if (retry) retry.addEventListener('click', () => { override = 'normal'; load(); });
+    const retry = container.querySelector('#retry'); if (retry) retry.addEventListener('click', load);
     container.querySelectorAll('.ap-approve').forEach(b => b.addEventListener('click', () => resolve(Number(b.dataset.id), { status: 'approved' })));
     container.querySelectorAll('.ap-reject').forEach(b => b.addEventListener('click', () => { promptFor = { id: Number(b.dataset.id), kind: 'reject' }; load(); }));
     container.querySelectorAll('.ap-withdraw').forEach(b => b.addEventListener('click', () => { promptFor = { id: Number(b.dataset.id), kind: 'withdraw' }; load(); }));

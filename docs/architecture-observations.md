@@ -773,3 +773,54 @@ bent. What is *not* done: `getSummary` still makes three DB calls total (the
 products+stock query, then Phase 11's bounded `listAll({ limit: 8 })` and
 `countSince(7)` over `inventory_transactions`) — those are cheap bounded reads over a
 different table and merging them in buys little (§7).
+
+## Cross-cutting: the last Phase 1 mockup scaffolding is deleted (Phase 20)
+
+Phase 20 (`docs/phase-20-plan.md`, issue #10) removes `UI.mockFetch`,
+`UI.previewControl`, and the per-view `?state=` / `override` handling from `frontend/` —
+the navigable-mockup machinery Phase 1 used to preview empty and error panels with no
+server, which ten backend phases then carried along and Phase 13 split out *unchanged*.
+
+**This is a trigger firing exactly as it was written.** Phase 13 §7 did not defer this
+deletion vaguely — it named the condition ("when someone decides the real backend's error
+and empty states can be exercised another way in development") and the reason for waiting
+("deletion is a behaviour change and this phase makes none"). The condition was already
+true when Phase 13 shipped — stopping `serve.js`'s upstream API produces the real error
+panel, an empty database or a non-matching filter produces the real empty panel — so the
+four phases after it (14–17) and Phase 18 that re-listed this as "out of scope, Phase 13
+§7" were each re-deferring with *no new information*, the move this project's standard
+rejects. Phase 19 is the precedent: it did the follow-on Phase 14 §7 had named and left
+sitting. Phase 20 does the one Phase 13 §7 named.
+
+**The scaffolding was never dev-gated, because the frontend has no build step**
+(Phase 13's native-ES-modules decision, Fork A2). `previewControl` rendered a dashed
+"Preview state" `<select>` — *Normal / Loading / Empty / Error* — into the toolbar of six
+production screens. "Not part of the real product" (its own source comment) was true of
+its intent and false of its reach; that gap is what a deletion, not another relocation,
+closes.
+
+**What the six `load()` functions looked like, and look like now.** Each read through
+`UI.mockFetch(factory, { forceState })` — a wrapper whose only surviving job was to add a
+microtask tick and to reject with a canned string when `forceState === 'error'` — and
+each `factory` branched on `override === 'empty'` to return a hard-coded empty payload.
+Removing the caller leaves `Store.x().then(render).catch(errorState)`, which is what the
+views for the two resources that never had the scaffolding (`categories.js`, `users.js`)
+already do. The "guarantee a Promise even if the factory returned a literal" reason the
+wrapper documented for itself evaporates once the `override === 'empty'` literal is gone
+and every path is an `async` `Store.*` call.
+
+**One piece of real behaviour was preserved, not deleted with the scaffolding.** The
+`override === 'empty'` ternary also chose between two genuinely different empty-state
+messages — "No products yet / add your first" versus "No matching products / clear the
+filters". Those are worth keeping, so each screen now derives which to show from whether a
+filter is actually narrowing the list (`!search && !category && status === 'all'` on
+products, the analogous check on each other view). The mockup control was faking a choice
+the app can make for itself.
+
+**Frontend-only, and no new test.** No backend file, no `serve.js`, no route, no
+migration — the ninth "no new BR" line, the tenth "no new FR" note. The existing
+`node --test` suite (28 tests) passes unedited: `products-list.test.js` stubs
+`Store.listProducts` and drives the view's real `attach()` wiring, and the view now
+awaits that stub directly. Phase 13 §7's *other* frontend trigger — a test harness for
+new frontend logic — stays unmet on purpose: a deletion introduces no behaviour to cover,
+and the empty/error panels themselves did not change.

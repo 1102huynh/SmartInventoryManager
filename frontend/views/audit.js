@@ -43,19 +43,15 @@ export function auditLog(container, query){
   // Views.userList (most visibly the `locked` badge) links to #/audit?subjectUserId=.
   let subjectUserId = (query && query.get('subjectUserId')) || '';
   let days = '';
-  let override = 'normal';
 
   function load(){
     container.innerHTML = header() + toolbar() + `<div class="table-wrap"><table class="data-table"><tbody>${UI.skeletonRows(6,6)}</tbody></table></div>`;
     attachHeaderHandlers();
-    UI.mockFetch(async () => {
-      if (override === 'empty') return { items: [], truncated: false };
-      return Store.listAuditEvents({
-        eventType: eventType || undefined,
-        subjectUserId: subjectUserId || undefined,
-        days: days ? Number(days) : undefined,
-      });
-    }, { forceState: override === 'error' ? 'error' : null })
+    Store.listAuditEvents({
+      eventType: eventType || undefined,
+      subjectUserId: subjectUserId || undefined,
+      days: days ? Number(days) : undefined,
+    })
       .then(result => { container.innerHTML = header() + toolbar() + body(result.items, result.truncated); attachAll(); })
       .catch(err => { container.innerHTML = header() + toolbar() + UI.errorState(err.message, 'retry'); attachAll(); });
   }
@@ -77,15 +73,16 @@ export function auditLog(container, query){
         <option value="90" ${days==='90'?'selected':''}>Last 90 days</option>
       </select>
       ${subjectUserId ? `<button type="button" class="btn btn-ghost btn-sm" id="a-clear-subject">Filtered to one account &times;</button>` : ''}
-      ${UI.previewControl(override)}
     </div>`;
   }
 
   function body(list, truncated){
     if (list.length === 0){
+      // No filter active means the log itself is empty, not that a filter missed.
+      const unfiltered = !eventType && !subjectUserId && !days;
       return UI.emptyState(
-        override === 'empty' ? 'No audit events recorded' : 'No matching events',
-        override === 'empty' ? 'Events will appear here once someone logs in or an Owner makes a change.' : 'Try a different filter combination.',
+        unfiltered ? 'No audit events recorded' : 'No matching events',
+        unfiltered ? 'Events will appear here once someone logs in or an Owner makes a change.' : 'Try a different filter combination.',
       );
     }
     // Phase 11: "narrow the range" here means the filters this toolbar already has —
@@ -125,11 +122,10 @@ export function auditLog(container, query){
     const t = container.querySelector('#a-type'); if (t) t.addEventListener('change', e => { eventType = e.target.value; load(); });
     const d = container.querySelector('#a-days'); if (d) d.addEventListener('change', e => { days = e.target.value; load(); });
     const clear = container.querySelector('#a-clear-subject'); if (clear) clear.addEventListener('click', () => { subjectUserId = ''; load(); });
-    const pr = container.querySelector('#preview-select'); if (pr) pr.addEventListener('change', e => { override = e.target.value; load(); });
   }
   function attachAll(){
     attachHeaderHandlers();
-    const retry = container.querySelector('#retry'); if (retry) retry.addEventListener('click', () => { override = 'normal'; load(); });
+    const retry = container.querySelector('#retry'); if (retry) retry.addEventListener('click', load);
   }
 
   load();

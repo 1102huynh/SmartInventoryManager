@@ -370,6 +370,17 @@ from a second round-trip into the products query. BR-060/BR-061 (low-stock flagg
 needs a configured threshold) and BR-062 (`needsAttention` is the low-stock list only)
 are unchanged and still enforced in the same place, in the same words.
 
+**[2026-09-07, Phase 20]** No new BR — the ninth such line (Phases 12 and 18 added rules
+in between the eight before it). `docs/phase-20-plan.md` (issue #10) deletes the Phase 1
+navigable-mockup scaffolding — `UI.mockFetch`, `UI.previewControl`, the per-view
+`?state=` / `override` handling — that Phase 13 §7 deferred removing until "the real
+backend's error and empty states can be exercised another way in development." It is a
+frontend-only deletion: no rule about the business, no backend file, no route, no
+migration. The empty-list and error panels every list screen renders are unchanged in
+wording and behaviour; only the review-only control that forced them without a backend is
+gone, and each screen now chooses its "nothing yet" vs. "no matches" copy from whether a
+filter is actually active.
+
 ## Adjustment Approval
 
 - **BR-085** [Decided 2026-09-03, Phase 12] — **A Staff-initiated adjustment is a

@@ -66,7 +66,7 @@ beforeEach(() => {
   };
 });
 
-// Lets the mockFetch promise chain (Promise.resolve().then(...)) settle.
+// Lets the view's `Store.listProducts(...).then(...)` chain settle.
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 test('first load requests page 1', async () => {

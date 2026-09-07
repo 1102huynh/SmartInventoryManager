@@ -136,30 +136,6 @@ export const UI = {
     setTimeout(() => { el.style.transition = 'opacity .25s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 260); }, 3400);
   },
 
-  // Phase 1 wrapped a synchronous mock-data read in an artificial delay to fake
-  // network latency. Phase 2's `factory` already talks to a real API over real
-  // network, so the delay is gone — but the "Preview state" control (below) still
-  // needs a way to force an error without actually calling the API, which is what
-  // forceState:'error' does. Promise.resolve().then(factory) (rather than just
-  // `return factory()`) guarantees this always returns a genuine Promise even if a
-  // view's factory synchronously returns a plain value for its own 'empty' case.
-  mockFetch(factory, { forceState = null } = {}){
-    if (forceState === 'error'){
-      return Promise.reject(new Error('Could not reach the server. Check your connection and try again.'));
-    }
-    return Promise.resolve().then(factory);
-  },
-
-  // A dev-only affordance (not part of the real product) so a reviewer can preview
-  // Loading / Empty / Error states without needing a real backend to misbehave.
-  previewControl(current){
-    const opts = [['normal','Normal'],['loading','Loading'],['empty','Empty (no data)'],['error','Error']];
-    return `<div class="preview-state" title="Review-only control to preview UI states">
-      <label for="preview-select">Preview state</label>
-      <select id="preview-select">${opts.map(([v,l]) => `<option value="${v}" ${v===current?'selected':''}>${l}</option>`).join('')}</select>
-    </div>`;
-  },
-
   skeletonRows(cols, rows){
     let out = '';
     for (let r = 0; r < rows; r++){

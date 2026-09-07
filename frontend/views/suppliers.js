@@ -7,7 +7,6 @@ import { Store } from '../api.js';
 export function supplierList(container, query){
   let search = '';
   let status = '';
-  let override = 'normal';
   // Phase 14 (docs/phase-14-plan.md §3): page state, reset to 1 on any search/filter change.
   const PAGE_SIZE = 50;
   let page = 1;
@@ -16,10 +15,7 @@ export function supplierList(container, query){
   function load(){
     container.innerHTML = header() + toolbar() + `<div class="table-wrap"><table class="data-table"><tbody>${UI.skeletonRows(4,4)}</tbody></table></div>`;
     attachHeaderHandlers();
-    UI.mockFetch(() => override === 'empty'
-        ? { items: [], total: 0, page: 1 }
-        : Store.listSuppliers({ search, status: status || undefined, page, pageSize: PAGE_SIZE }),
-      { forceState: override === 'error' ? 'error' : null })
+    Store.listSuppliers({ search, status: status || undefined, page, pageSize: PAGE_SIZE })
       .then(result => {
         total = result.total;
         page = result.page;
@@ -47,11 +43,14 @@ export function supplierList(container, query){
         <option value="active" ${status==='active'?'selected':''}>Active</option>
         <option value="inactive" ${status==='inactive'?'selected':''}>Inactive</option>
       </select>
-      ${UI.previewControl(override)}
     </div>`;
   }
   function body(list){
-    if (list.length === 0) return UI.emptyState(override==='empty' ? 'No suppliers yet' : 'No matching suppliers', override==='empty' ? 'Add a supplier to start linking them to stock-in.' : 'Try a different search or filter.');
+    if (list.length === 0){
+      // A truly empty list vs. a filter that matched nothing — different copy.
+      if (!search && !status) return UI.emptyState('No suppliers yet', 'Add a supplier to start linking them to stock-in.');
+      return UI.emptyState('No matching suppliers', 'Try a different search or filter.');
+    }
     return `<div class="table-wrap"><table class="data-table">
       <thead><tr><th>Supplier</th><th>Contact</th><th>Status</th><th></th></tr></thead>
       <tbody>${list.map(s => `<tr class="clickable" data-goto="#/suppliers/${s.id}">
@@ -63,7 +62,6 @@ export function supplierList(container, query){
   }
   function attachHeaderHandlers(){
     const s = container.querySelector('#sl-status'); if (s) s.addEventListener('change', e => { status = e.target.value; page = 1; load(); });
-    const p = container.querySelector('#preview-select'); if (p) p.addEventListener('change', e => { override = e.target.value; page = 1; load(); });
   }
   function attachAll(){
     attachHeaderHandlers();
@@ -75,7 +73,7 @@ export function supplierList(container, query){
       page += btn.dataset.pager === 'next' ? 1 : -1;
       load();
     }));
-    const retry = container.querySelector('#retry'); if (retry) retry.addEventListener('click', () => { override='normal'; load(); });
+    const retry = container.querySelector('#retry'); if (retry) retry.addEventListener('click', load);
   }
   load();
 }

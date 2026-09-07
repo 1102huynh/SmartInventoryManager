@@ -2,6 +2,7 @@ import { todayInputValue } from '../config.js';
 import { isOwner } from '../session.js';
 import { UI } from '../ui.js';
 import { Store } from '../api.js';
+import { createTypeahead } from '../typeahead.js';
 
 // -------------------------------------------------------------- Transaction Wizard --
 // Shared by Stock In (FR-020), Stock Out (FR-021), and Adjustment (FR-022) — the three
@@ -18,7 +19,11 @@ const TITLES = { 'stock-in': 'Stock In', 'stock-out': 'Stock Out', 'adjustment':
 
 export function transactionWizard(container, productId, type){
   let product = null;
-  let activeSuppliers = []; // only fetched/used for type === 'stock-in'
+  // Phase 17 (docs/phase-17-plan.md §3): the stock-in supplier picker is a typeahead
+  // querying /suppliers?search=&status=active now, not a <select> pre-filled with every
+  // active supplier. `supplierPicker` holds the live instance so a re-render (a
+  // validation failure) can tear the old one down before building the new.
+  let supplierPicker = null;
   let step = 'form'; // form | review | success
   let saving = false;
   let savedTx = null;
@@ -28,22 +33,18 @@ export function transactionWizard(container, productId, type){
   const adjustmentNeedsApproval = type === 'adjustment' && !isOwner();
   let sentForApproval = false;
   const form = {
-    quantity: '', newQty: '', date: todayInputValue(), supplierId: '',
+    quantity: '', newQty: '', date: todayInputValue(), supplierId: '', supplierLabel: '',
     reason: '', reasonCategory: '', reasonOther: '',
   };
   let errors = {};
 
-  // Both the product (for its name/unit/currentStock/status) and, for stock-in, the
-  // active-supplier list have to be fetched before there's a form to show at all —
-  // Phase 1 had both sitting in local arrays already, so this loading step didn't
-  // exist yet.
+  // Only the product (its name/unit/currentStock/status) has to be fetched before
+  // there's a form to show. Phase 17: the active-supplier list is no longer pulled
+  // here — the supplier typeahead fetches a page at a time as the user types.
   function load(){
     container.innerHTML = `<div class="skeleton skeleton-line" style="width:220px;height:24px"></div>`;
-    Promise.all([
-      Store.getProduct(productId),
-      type === 'stock-in' ? Store.listSuppliers({ status: 'active' }) : Promise.resolve([]),
-    ]).then(([p, suppliers]) => {
-      product = p; activeSuppliers = suppliers;
+    Store.getProduct(productId).then(p => {
+      product = p;
       render();
     }).catch(err => { container.innerHTML = UI.errorState(err.message, 'retry'); container.querySelector('#retry')?.addEventListener('click', load); });
   }
@@ -77,7 +78,7 @@ export function transactionWizard(container, productId, type){
       <div class="card card-pad">
         <p style="margin-bottom:16px;color:var(--ink-muted);font-size:.85rem">Current stock: <strong class="tnum" style="color:var(--ink)">${current} ${UI.esc(product.unit)}</strong></p>
         <form id="wizard-form" novalidate>
-          ${type === 'adjustment' ? adjustmentFields() : inOutFields(activeSuppliers)}
+          ${type === 'adjustment' ? adjustmentFields() : inOutFields()}
           <div class="field${errors.date ? ' has-error' : ''}">
             <label>Date <span class="req">*</span></label>
             <input type="date" id="f-date" value="${UI.esc(form.date)}" max="${todayInputValue()}">
@@ -92,7 +93,7 @@ export function transactionWizard(container, productId, type){
     </div>`;
   }
 
-  function inOutFields(activeSuppliers){
+  function inOutFields(){
     return `
       <div class="field${errors.quantity ? ' has-error' : ''}">
         <label>Quantity (${UI.esc(product.unit)}) <span class="req">*</span></label>
@@ -102,11 +103,8 @@ export function transactionWizard(container, productId, type){
       ${type === 'stock-in' ? `
       <div class="field">
         <label>Supplier</label>
-        <select id="f-supplier">
-          <option value="">— No supplier recorded —</option>
-          ${activeSuppliers.map(s => `<option value="${s.id}" ${s.id===form.supplierId?'selected':''}>${UI.esc(s.name)}</option>`).join('')}
-        </select>
-        <div class="hint">Optional — inactive suppliers can't be selected (FR-013).</div>
+        <div id="f-supplier"></div>
+        <div class="hint">Optional — type to search active suppliers; inactive ones can't be selected (FR-013).</div>
       </div>` : `
       <div class="field">
         <label>Reason</label>
@@ -154,7 +152,7 @@ export function transactionWizard(container, productId, type){
     const reasonText = type === 'adjustment'
       ? (form.reasonCategory === 'other' ? form.reasonOther : (REASON_OPTIONS.find(r => r[0] === form.reasonCategory) || [,''])[1])
       : form.reason;
-    const supplierName = form.supplierId ? activeSuppliers.find(s => String(s.id) === String(form.supplierId))?.name : null;
+    const supplierName = form.supplierId ? form.supplierLabel : null;
     return `<div class="wizard-wrap">
       <div class="card card-pad">
         <div class="review-card">
@@ -224,8 +222,9 @@ export function transactionWizard(container, productId, type){
       if (other) form.reasonOther = other.value;
     } else {
       form.quantity = container.querySelector('#f-quantity').value;
-      if (type === 'stock-in') form.supplierId = container.querySelector('#f-supplier').value;
-      else form.reason = container.querySelector('#f-reason').value;
+      // Phase 17: the supplier typeahead keeps form.supplierId / form.supplierLabel
+      // current via its onSelect — there is no field to read back here.
+      if (type !== 'stock-in') form.reason = container.querySelector('#f-reason').value;
     }
     form.date = container.querySelector('#f-date').value;
   }
@@ -249,6 +248,10 @@ export function transactionWizard(container, productId, type){
   }
 
   function attach(){
+    // The supplier typeahead only lives on the form step; drop any prior instance
+    // before this render wires (or doesn't wire) a fresh one.
+    supplierPicker?.destroy();
+    supplierPicker = null;
     if (step === 'form'){
       const f = container.querySelector('#wizard-form');
       f.addEventListener('submit', ev => {
@@ -263,6 +266,18 @@ export function transactionWizard(container, productId, type){
       // don't explicitly track here (quantity/date already typed) would be wiped out
       // by the next render, which rebuilds the form HTML from `form` state.
       if (rc) rc.addEventListener('change', () => { readForm(); render(); container.querySelector('#f-reason-cat')?.focus(); });
+      // Phase 17: stock-in's supplier picker. onSelect keeps form.supplierId /
+      // form.supplierLabel current; `initial` re-seeds it after a validation re-render.
+      const sup = container.querySelector('#f-supplier');
+      if (sup){
+        supplierPicker = createTypeahead(sup, {
+          emptyLabel: '— No supplier recorded —',
+          initial: form.supplierId ? { id: form.supplierId, label: form.supplierLabel } : null,
+          search: q => Store.listSuppliers({ status: 'active', search: q || undefined, pageSize: 20 })
+            .then(r => ({ items: r.items.map(s => ({ id: s.id, label: s.name })), total: r.total })),
+          onSelect: sel => { form.supplierId = sel ? sel.id : ''; form.supplierLabel = sel ? sel.label : ''; },
+        });
+      }
     } else if (step === 'review'){
       container.querySelector('#btn-back').addEventListener('click', () => { step = 'form'; render(); });
       container.querySelector('#btn-confirm').addEventListener('click', () => {
@@ -300,7 +315,8 @@ export function transactionWizard(container, productId, type){
       if (again) again.addEventListener('click', () => {
         step = 'form'; savedTx = null; sentForApproval = false; errors = {};
         form.quantity = ''; form.newQty = ''; form.date = todayInputValue();
-        form.supplierId = ''; form.reason = ''; form.reasonCategory = ''; form.reasonOther = '';
+        form.supplierId = ''; form.supplierLabel = '';
+        form.reason = ''; form.reasonCategory = ''; form.reasonOther = '';
         render();
       });
     }
@@ -315,24 +331,21 @@ export function transactionWizard(container, productId, type){
 export function historyView(container, query){
   let type = '';
   let productId = '';
+  let selectedProductLabel = ''; // shown in the typeahead once a product is picked
   let days = '';
   let override = 'normal';
-  // Populated once (see load()) to fill the "product" filter dropdown — Phase 1 had
-  // this list in memory for free; Phase 2 fetches it once and reuses it across
-  // filter changes instead of re-fetching on every load().
-  let productOptions = [];
+  // Phase 17 (docs/phase-17-plan.md §3): the product filter is a typeahead querying
+  // /products?search= a page at a time — not a <select> pre-loaded with every product
+  // (issue #7). `productPicker` holds the live instance so each re-render tears the
+  // old one down first.
+  let productPicker = null;
 
   function load(){
     container.innerHTML = header() + toolbar() + `<div class="table-wrap"><table class="data-table"><tbody>${UI.skeletonRows(6,7)}</tbody></table></div>`;
     attachHeaderHandlers();
-    UI.mockFetch(async () => {
+    UI.mockFetch(() => {
       if (override === 'empty') return { items: [], truncated: false };
-      const [products, result] = await Promise.all([
-        productOptions.length ? productOptions : Store.listProducts({}),
-        Store.listAllTransactions({ type: type || undefined, productId: productId || undefined, days: days ? Number(days) : undefined }),
-      ]);
-      productOptions = products;
-      return result;
+      return Store.listAllTransactions({ type: type || undefined, productId: productId || undefined, days: days ? Number(days) : undefined });
     }, { forceState: override === 'error' ? 'error' : null })
       .then(result => { container.innerHTML = header() + toolbar() + body(result.items, result.truncated); attachAll(); })
       .catch(err => { container.innerHTML = header() + toolbar() + UI.errorState(err.message, 'retry'); attachAll(); });
@@ -350,10 +363,7 @@ export function historyView(container, query){
         <option value="stock-out" ${type==='stock-out'?'selected':''}>Stock Out</option>
         <option value="adjustment" ${type==='adjustment'?'selected':''}>Adjustment</option>
       </select>
-      <select class="select-filter" id="h-product">
-        <option value="">All products</option>
-        ${productOptions.map(p => `<option value="${p.id}" ${String(p.id)===String(productId)?'selected':''}>${UI.esc(p.name)}</option>`).join('')}
-      </select>
+      <div id="h-product"></div>
       <select class="select-filter" id="h-days">
         <option value="">All time</option>
         <option value="7" ${days==='7'?'selected':''}>Last 7 days</option>
@@ -395,7 +405,17 @@ export function historyView(container, query){
 
   function attachHeaderHandlers(){
     const t = container.querySelector('#h-type'); if (t) t.addEventListener('change', e => { type = e.target.value; load(); });
-    const p = container.querySelector('#h-product'); if (p) p.addEventListener('change', e => { productId = e.target.value; load(); });
+    const p = container.querySelector('#h-product');
+    if (p){
+      productPicker?.destroy();
+      productPicker = createTypeahead(p, {
+        emptyLabel: 'All products',
+        initial: productId ? { id: productId, label: selectedProductLabel } : null,
+        search: q => Store.listProducts({ search: q || undefined, pageSize: 20 })
+          .then(r => ({ items: r.items.map(x => ({ id: x.id, label: x.name })), total: r.total })),
+        onSelect: sel => { productId = sel ? sel.id : ''; selectedProductLabel = sel ? sel.label : ''; load(); },
+      });
+    }
     const d = container.querySelector('#h-days'); if (d) d.addEventListener('change', e => { days = e.target.value; load(); });
     const pr = container.querySelector('#preview-select'); if (pr) pr.addEventListener('change', e => { override = e.target.value; load(); });
   }

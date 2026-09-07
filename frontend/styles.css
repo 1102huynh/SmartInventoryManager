@@ -226,6 +226,22 @@ table.data-table tbody tr.clickable:hover{background:var(--surface-2);}
 .preview-state{margin-left:auto; display:flex; align-items:center; gap:6px; border:1px dashed var(--border-strong); border-radius:var(--radius); padding:4px 8px; font-size:.72rem; color:var(--ink-faint);}
 .preview-state select{border:none; background:transparent; color:var(--ink-muted); font-size:.72rem; font-weight:600;}
 
+/* Phase 17 (docs/phase-17-plan.md §3): the shared search-as-you-type picker — see
+   frontend/typeahead.js. Replaces the two catalogue <select>s that loaded every row. */
+.typeahead{position:relative;}
+.toolbar .typeahead{flex:1; min-width:200px; max-width:320px;}
+.typeahead-field{position:relative;}
+.typeahead-field svg{position:absolute; left:10px; top:50%; transform:translateY(-50%); width:14px; height:14px; color:var(--ink-faint); pointer-events:none;}
+.typeahead-input{width:100%; padding:8px 30px 8px 32px; border:1px solid var(--border-strong); border-radius:var(--radius); background:var(--surface); color:var(--ink); font-size:.83rem;}
+.typeahead-input:focus{border-color:var(--accent); outline:none;}
+.typeahead-clear{position:absolute; right:5px; top:50%; transform:translateY(-50%); width:20px; height:20px; padding:0; border:none; background:transparent; color:var(--ink-faint); font-size:1.05rem; line-height:1; cursor:pointer; border-radius:var(--radius-sm);}
+.typeahead-clear:hover{background:var(--surface-2); color:var(--ink);}
+.typeahead-menu{position:absolute; z-index:20; top:calc(100% + 4px); left:0; right:0; max-height:260px; overflow-y:auto; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--radius); box-shadow:var(--shadow-md); padding:4px;}
+.typeahead-option{padding:8px 10px; border-radius:var(--radius-sm); font-size:.85rem; color:var(--ink); cursor:pointer;}
+.typeahead-option:hover,.typeahead-option.is-active{background:var(--accent-soft); color:var(--accent-strong);}
+.typeahead-empty,.typeahead-more{padding:8px 10px; font-size:.78rem; color:var(--ink-faint);}
+.typeahead-more{border-top:1px solid var(--border); margin-top:2px;}
+
 /* ============================= EMPTY / ERROR / SKELETON ============================= */
 .empty-state,.error-state{display:flex; flex-direction:column; align-items:center; text-align:center; gap:8px; padding:52px 24px; color:var(--ink-muted);}
 .empty-state svg,.error-state svg{width:34px; height:34px; color:var(--ink-faint); margin-bottom:4px;}

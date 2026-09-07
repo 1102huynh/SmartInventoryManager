@@ -17,10 +17,10 @@ docs/            Product, requirements, business rules, domain model, API docs, 
 tools/           Portable local PostgreSQL (see tools/README.md) — dev database
 backend/         NestJS API (Phase 2)
 frontend/        Static UI — index.html shell + styles.css + a graph of ES modules
-                 (config/session/reference-data/ui/api/router/main + views/ + pager),
-                 served by serve.js. No framework, no build step (Phase 13). A
-                 package.json + test/ was added in Phase 14 for `npm test` only —
-                 the app itself still installs nothing.
+                 (config/session/reference-data/ui/api/router/main + views/ + pager
+                 + typeahead), served by serve.js. No framework, no build step
+                 (Phase 13). A package.json + test/ was added in Phase 14 for
+                 `npm test` only — the app itself still installs nothing.
 ```
 
 ## Running it locally
@@ -128,7 +128,9 @@ npm test        # node --test: the paging logic (Phase 14, Fork G)
 See `docs/learning-notes/testing-strategy.md` for what each of these actually proves.
 The frontend suite is the first one it has — `pager.test.js` covers the pure pager
 arithmetic, `products-list.test.js` (jsdom) covers the reset-to-page-1-on-filter
-behaviour.
+behaviour, and (Phase 17) `typeahead.test.js` / `history-filter.test.js` (jsdom) cover
+the search-as-you-type picker — debounce, the stale-response guard, select/clear, and
+that the History filter re-requests by product id.
 
 **The two test databases** (`smart_inventory_test` for integration, `smart_inventory_e2e`
 for e2e) are separate from the dev `smart_inventory`, and the local setup for them was
@@ -174,7 +176,27 @@ See `docs/learning-notes/ci-and-environments.md`.
 
 ## Current phase
 
-Phase 16 — A clean, blocking lint (`docs/phase-16-plan.md`): the `lint` job Phase 15
+Phase 17 — Searchable / typeahead pickers (`docs/phase-17-plan.md`): finishes the job
+Phase 14 §7 named. Three catalogue reads still fetched **every** row for a non-screen
+caller — the stock-in wizard's supplier `<select>`, the Inventory History
+product-filter `<select>`, and the Categories screen's client-side product count. The
+two `<select>`s are now **search-as-you-type** controls (`frontend/typeahead.js`, a new
+shared module) that query `GET /suppliers?search=&status=active` and
+`GET /products?search=` a page at a time, and say `+N more — keep typing to narrow`
+when there is more to find rather than dropping it silently. The Categories count is a
+server-side `productCount` on the paged `GET /categories` read (a computed column, the
+Phase 14 Fork B pattern). After this, `GET /products` and `GET /suppliers` have **no
+caller that wants the whole set**; only `GET /categories` does, via the small
+`CATEGORIES` reference cache, which is left unbounded on purpose (a dozen categories is
+a `<select>`, not a search box). **No migration this phase** — a computed column in a
+read is not a schema change — and no domain document changes: no new FR (a field you
+type into to filter its options is a screen affordance), no new BR, no new route or
+entity. `serve.js` is still byte-for-byte unchanged and running the app still needs no
+`npm install`. See `docs/architecture-observations.md`'s Phase 17 section for the
+unbounded-read precondition now closed for two of three routes, and why the third is
+deliberately left.
+
+Earlier phases: Phase 16 — A clean, blocking lint (`docs/phase-16-plan.md`): the `lint` job Phase 15
 wired was `continue-on-error` — it reported, it did not gate. This phase gets `eslint`
 to exit `0` on the backend tree (an `eslint --fix` sweep for the 24 auto-fixable
 errors, committed alone as `style:`; one rule — `no-unsafe-call` — relaxed in the

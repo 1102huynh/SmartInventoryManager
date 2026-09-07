@@ -193,3 +193,17 @@ only closes at runtime is not something to design away.
 — when it added the first genuinely new frontend logic (the list-screen pager),
 exactly as Phase 13 §7 said that trigger would fire. See
 `docs/learning-notes/testing-strategy.md`.*
+
+*Phase 17 (`docs/phase-17-plan.md`) added `frontend/typeahead.js` — the second
+non-view module with real behaviour, after `pager.js`. The rule it follows: a
+`UI.*` helper is a **pure function that returns markup** (`UI.pager`,
+`UI.truncationNotice`, `UI.badgeStatus`); a **module** is for something that holds
+live state or attaches listeners and is shared by more than one view. `typeahead.js`
+does both — it owns a committed `{ id, label }`, an in-flight request sequence, a
+debounce timer, and a `document` listener, and `views/transactions.js` uses it twice
+(the stock-in supplier field and the Inventory History product filter). So it sits
+beside `pager.js` in the graph — imported by the views, importing only `ui.js` for
+`UI.esc` / `UI.icon` — not folded into `ui.js`. Its `createTypeahead(mountEl, opts)`
+returns a `{ destroy() }` handle because the views rebuild their `innerHTML` on every
+`load()`: the instance is torn down and re-seeded from view state each render, the
+same throwaway-and-rebuild model every screen has used since Phase 13.*

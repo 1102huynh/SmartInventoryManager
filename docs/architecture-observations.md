@@ -311,7 +311,11 @@ project's scale, silently invalidated by growth or by a second process, never ch
 coincidences. *(Phase 14 retires the tractable part of the catalogue-reads one — every
 list **screen** is now paged and the routes accept a page — but the three routes with
 a whole-set second consumer still return the full set by default, so it drops to
-**two-and-a-half**, not two.)*
+**two-and-a-half**, not two. Phase 17 then closes it for `GET /products` and
+`GET /suppliers` by making their pickers search-as-you-type: neither route has a
+whole-set caller any more. It survives only on `GET /categories` via the `CATEGORIES`
+reference cache, which is deliberately left unbounded — see the Phase 17 section
+below.)*
 
 ## Cross-cutting: the module seam's first real test, and a convention reused by reference (Phase 12)
 
@@ -635,3 +639,51 @@ byte-for-byte unchanged because the new `package.json` carries no `"type"` field
 `node_modules`, resisted since `serve.js` was written and by Phase 13 for a *bundler*;
 a `node --test` harness is not a bundler, and "the first real frontend logic ships
 untested" is the outcome Phase 13 §7's trigger exists to prevent.
+
+## Cross-cutting: the unbounded-read precondition closed for two of three routes (Phase 17)
+
+Phase 17 (`docs/phase-17-plan.md`) did the work Phase 14 §1/§7 named as its successor:
+the three catalogue reads that still fetched every row for a non-screen caller are
+gone. The stock-in wizard's supplier field and the Inventory History product filter
+are now search-as-you-type controls (`frontend/typeahead.js`) that query
+`GET /suppliers?search=&status=active` and `GET /products?search=` a page at a time;
+the Categories screen's client-side product count is a server-computed `productCount`
+on the paged `GET /categories` read.
+
+**The precondition is retired for `GET /products` and `GET /suppliers`, and survives
+only on `GET /categories`.** After this phase, grep finds no caller of `listProducts`
+or `listSuppliers` that omits a paging param — the list screens page, the pickers
+search-and-page. `GET /categories` still has one whole-set caller,
+`Store.loadReferenceData`, which fills the `CATEGORIES` cache every product form's
+category `<select>` reads. That one is **left unbounded on purpose** (Phase 17 Fork D):
+categories are a small, slow-growing, fixed set — `npm run seed` makes five, a real
+small business a dozen — and a `<select>` of a dozen options is the right control; a
+typeahead over it would be worse UX for no gain. So the count on this file's
+three-preconditions ledger goes from *two-and-a-half* (Phase 14) to *two-and-a-sliver*:
+the throttle store and the best-effort audit write are untouched, and the
+catalogue-reads one is down to a single route whose set is bounded in practice by what
+a shop is. `DashboardService.find()` is a separate whole-catalogue read (issue #9), not
+this precondition — a `lowStockCount` summary inherently needs every product.
+
+**The category count reused Phase 14 Fork B's pattern exactly, and shipped no
+migration.** `CategoriesService.findAll`'s paged branch went from `findAndCount` to a
+query-builder read with a grouped subquery `leftJoin` over `products` + `addSelect` +
+`getRawAndEntities` — the same shape `ProductsService.findAll` uses for current stock.
+The no-param branch is untouched, so the `CATEGORIES` reference-cache response is
+byte-for-byte what it was (asserted, in both the integration and e2e specs, that the
+bare array carries no `productCount` key). `products.category_id` is already indexed by
+the `InitSchema` foreign key, so the join has support. **A reviewer arriving from
+Phases 11, 12, and 14's migration notes should note: Phase 14 shipped no migration and
+neither does this — a computed column in a read is not a schema change.**
+
+**`frontend/typeahead.js` is the second frontend module with real behaviour and its
+own test, after `pager.js` (Phase 14).** It is a module rather than a `UI.*` helper for
+the same reason: `UI.pager` / `UI.truncationNotice` are pure markup functions, while
+this holds live state (the committed selection, an in-flight request sequence) and
+attaches listeners, and two views share it. The behaviour worth a test — a debounce, a
+stale-response guard that drops a superseded query's result, "revert the visible text
+to the committed selection on blur" — is DOM-and-async, not arithmetic, so it is
+covered directly with jsdom (`frontend/test/typeahead.test.js`), not split into a pure
+core the way `pager.js` was (Phase 17 Fork C). Every listener is attached by the
+factory to an element it created — the Phase 13 "no inline `on*` handler" invariant,
+now also observed by a module that builds its own DOM.

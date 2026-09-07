@@ -193,6 +193,21 @@ the existing test-file override, and two dead variables removed — proven behav
 by the full suite passing unchanged (14/143, 7/90). No migration, no domain-model
 change.
 
+## Searchable / Typeahead Pickers (Phase 17 — no new FR)
+
+Phase 17 (`docs/phase-17-plan.md`) turned the stock-in wizard's supplier `<select>`
+and the Inventory History product-filter `<select>` into search-as-you-type controls
+over the paged, searchable routes Phase 14 added, and replaced the Categories screen's
+client-side product count with a server-side one. The eighth "no new FR" note, and the
+close kin of Phases 11 and 14's: **FR-004 ("view all products…"), FR-020 ("record
+stock-in: product, quantity, date, and… supplier"), and FR-031 ("view all inventory
+transactions") all read exactly as before.** A field where you type to filter the
+options, instead of scrolling a list of all of them, is a screen affordance over the
+same capability — no user goal in `product.md` §4 is added, changed, or removed, and no
+Owner opens a screen to interact with "how the supplier field is populated". This is
+what finishes the job Phase 14 §7 named — the pickers no longer fetch the whole
+catalogue — but the requirement it serves (FR-020's supplier selection) is untouched.
+
 ## Cross-Reference Summary
 
 ```

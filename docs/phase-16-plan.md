@@ -1,7 +1,29 @@
 # Phase 16 Plan — A Clean, Blocking Lint
 
-Status: Phase 16 — Planned
+Status: Phase 16 — Implemented on branch `phase-16` (all steps done and verified
+locally; first hosted CI run pending a `git push`)
 Last updated: 2026-09-07
+
+**[2026-09-07, on implementation]**
+- **The `--fix` sweep was not purely subtractive.** Removing the two
+  `no-unnecessary-type-assertion` casts (`as User` in `jwt.strategy.spec.ts`) orphaned
+  that file's `import { User }`, turning the pre-fix "5 manual errors" into 6: 4
+  `no-unsafe-call` + 2 unused (`jwtService` in `users.e2e-spec.ts`, now-unused `User`
+  import). Both unused symbols deleted; the `no-unsafe-call` four handled by Fork B.
+- **Fork C confirmed.** `jwtService` was `moduleRef.get(JwtService)` in `beforeAll`
+  and never read — dead setup; nothing in the `describe` needed it (e2e tokens come
+  from real `/auth/login`). Removed import, field, and assignment.
+- **Fork B scoping verified (§5).** A deliberate `x.foo()` on `any` in a throwaway
+  `src/` file still errors `no-unsafe-call` — the relaxation is confined to
+  `**/*.spec.ts` + `test/**/*.ts`.
+- **Fork F: `git add --renormalize .` produced no content diff** — blobs were already
+  LF. `.gitattributes` is for future determinism and to match the Linux runner.
+- **Verification (portable Postgres running):** `npm run lint:check` exits `0`;
+  `npm test` 14 suites / 143 tests; `npm run test:e2e` 7 suites / 90 tests — all green,
+  counts unchanged from Phase 15's baseline. The `--fix` diff was read hunk by hunk:
+  wrapping, trailing commas, and two removed redundant `as` — nothing else. The CI
+  negative check (reintroduce an error → red) is pending the push.
+
 Scope decided with the project owner: **get `eslint` to exit `0` on the backend tree,
 give CI a `--fix`-free way to run it, and flip the `lint` job's eslint step from
 informational to blocking — so the check Phase 15 wired stops being permanently

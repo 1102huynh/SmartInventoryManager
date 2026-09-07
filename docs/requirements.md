@@ -164,6 +164,16 @@ it runs the suite that already exists. The only files that changed are `.github/
 `.nvmrc`, `backend/package.json`'s new `engines` field, `tools/create-test-databases.mjs`,
 and documentation.
 
+## A Clean, Blocking Lint (Phase 16 — no new FR)
+
+Phase 16 (`docs/phase-16-plan.md`) got `eslint` to exit `0` on the backend tree and
+made the CI `lint` step blocking. The sixth "no new FR" note: a lint gate is an
+engineering practice, not a `product.md` §4 capability. The `src/`/`test/` edits are a
+mechanical `eslint --fix` sweep (formatting), one rule (`no-unsafe-call`) relaxed in
+the existing test-file override, and two dead variables removed — proven behaviour-inert
+by the full suite passing unchanged (14/143, 7/90). No migration, no domain-model
+change.
+
 ## Cross-Reference Summary
 
 ```

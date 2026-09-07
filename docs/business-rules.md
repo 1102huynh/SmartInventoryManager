@@ -306,6 +306,11 @@ environment on every push. It enforces nothing about the business — it enforce
 the code enforcing the business still passes its own tests. No rule here is added,
 amended, or reinterpreted; no application code changes at all.
 
+**[2026-09-07, Phase 16]** No new BR — the fifth such line. `docs/phase-16-plan.md`
+makes the CI `lint` step blocking and clears the eslint tree (a formatting sweep, one
+test-only rule relaxed, two dead variables removed). It changes no business behaviour:
+the full backend suite passes unchanged (14/143, 7/90).
+
 ## Adjustment Approval
 
 - **BR-085** [Decided 2026-09-03, Phase 12] — **A Staff-initiated adjustment is a

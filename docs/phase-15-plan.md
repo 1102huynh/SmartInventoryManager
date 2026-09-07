@@ -26,16 +26,24 @@ rather than left to drift from the plan:
 - **`npm run lint` is not CI-safe, and the committed tree is not lint-clean.** The
   script is `eslint --fix` — it rewrites files instead of checking them, and running it
   once during implementation reformatted ~12 unrelated files (pure prettier
-  line-wrapping) and still reported **6 errors it cannot auto-fix** (unused imports /
-  `no-unsafe-call` in `jwt.strategy.spec.ts`, `audit.e2e-spec.ts`, `users.e2e-spec.ts`).
-  Those errors predate this phase; "full suite green" in twelve DoD checklists never
-  included a clean lint, because `--fix` quietly rewrites on every local run and the
-  errors scroll past. This is precisely the "green was a claim about one machine"
-  thesis (§"why now") proving itself the moment CI was wired. **Handled without
-  widening scope:** the `lint` job runs `nest build` as the blocking typecheck (clean)
-  and runs `npm run lint` as an *informational, non-blocking* step
-  (`continue-on-error`). Fixing the 6 errors and replacing `--fix` with a check-mode
-  lint script is a named follow-up (§7) — this phase does not touch `src/` or `test/`.
+  line-wrapping) and still reported errors it cannot auto-fix. Those errors predate
+  this phase; "full suite green" in twelve DoD checklists never included a clean lint,
+  because `--fix` quietly rewrites on every local run and the errors scroll past. This
+  is precisely the "green was a claim about one machine" thesis (§"why now") proving
+  itself the moment CI was wired. **Handled without widening scope:** the `lint` job
+  runs `nest build` as the blocking typecheck (clean) and runs `npm run lint` as an
+  *informational, non-blocking* step (`continue-on-error`). A check-mode lint script
+  plus clearing the errors is a named follow-up (§7) — this phase does not touch
+  `src/` or `test/`.
+
+  **[2026-09-07, superseded by Phase 16]** The "6 errors" figure above was taken
+  mid-`--fix` and undershot. A clean check-mode run (`npx eslint "{src,apps,libs,test}
+  /**/*.ts"`) on the committed tree was **29 errors across ~15 files**: 22
+  `prettier/prettier` + 2 `no-unnecessary-type-assertion` (24 auto-fixable) + 4
+  `no-unsafe-call` + 1 unused var (5 manual; a 6th unused-var appeared once `--fix`
+  removed the type assertions that had been referencing an import). `docs/phase-16-plan.md`
+  cleared all of them, added a `--fix`-free `lint:check` script, and made the `lint`
+  job's eslint step blocking. The §7 "A proper lint gate" bullet is done.
 - **Verification run on the authoring machine (portable Postgres started for it).**
   All three checks the plan calls for locally now pass on the committed tree:
   - **Migration chain from empty (§1 Fork D, §"why now" — the flagged high-risk step):**
@@ -505,11 +513,11 @@ passes locally — CI is additive.
    pin to the installed version — Fork G).
 2. **`ci.yml` with the `lint` job only.** Push the branch; confirm it goes green. This
    proves checkout + `setup-node` + cache + `npm ci` + build work before any database
-   is involved. **(Amended on implementation:** the job's blocking check is `nest build`
-   only; `npm run lint` runs as a non-blocking informational step because the committed
-   tree has 6 pre-existing eslint errors and the script is `--fix`-based — see the
-   amendment at the top of this plan. "Green" here means the typecheck passed, not that
-   lint is clean.)
+   is involved. **(Amended on implementation:** the job's blocking check was `nest
+   build` only; `npm run lint` ran as a non-blocking informational step because the
+   committed tree had pre-existing eslint errors and the script is `--fix`-based.
+   **Phase 16 finished this** — the tree is clean, `lint:check` runs in check mode, and
+   the eslint step now blocks.)
 3. **Add the `test` job** (service container + `createdb smart_inventory_test` + `npm
    test`). Push; green. First proof the service container and integration specs work in
    CI.
@@ -544,14 +552,12 @@ false-green is possible and unproven against.
   where trunk stops receiving direct pushes (Fork F). It is a one-click change then.
 - **A Node version matrix.** One app, one deploy target, one runtime (Fork G).
   **Trigger:** the project ever being consumed as a library, which is not on any roadmap.
-- **A proper lint gate.** `npm run lint` is `eslint --fix` (mutates, does not check)
-  and the committed tree has 6 errors it cannot auto-fix plus ~12 non-prettier-clean
-  files (surfaced by this phase — see the amendment at the top). Making lint a real,
-  blocking check means a check-mode script (`eslint` without `--fix`) *and* clearing
-  those errors — the latter touches `src/`/`test/`, which this phase does not.
-  **Trigger:** its own small `chore:` change, ideally before CI is made a required
-  check (Fork F). Until then the `lint` job runs eslint non-blocking for visibility and
-  gates only on `nest build`.
+- **A proper lint gate.** ~~`npm run lint` is `eslint --fix` (mutates, does not check)
+  and the committed tree has errors it cannot auto-fix plus non-prettier-clean files.
+  Making lint a real, blocking check means a check-mode script *and* clearing those
+  errors — the latter touches `src/`/`test/`, which this phase does not.~~
+  **Done — Phase 16** (`docs/phase-16-plan.md`): 29 errors cleared, `lint:check` added,
+  the `lint` job's eslint step is now blocking.
 - **Coverage reporting / a coverage gate / a coverage service (Codecov etc.).**
   `jest --coverage` exists as `npm run test:cov`; wiring it to a threshold or an
   external service is a separate decision about what number matters and what to do when

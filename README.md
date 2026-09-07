@@ -139,12 +139,14 @@ it needs `migration:run` once, and again after any new migration.
 every pull request against `develop`, plus a manual trigger. Three jobs, each on a
 clean `postgres:17` service container where it needs a database:
 
-- **`lint`** — `nest build` (the typecheck, blocking) plus `npm run lint` as a
-  non-blocking informational step (the script is `eslint --fix`, and the tree has
-  pre-existing lint errors — a real lint gate is a follow-up, `docs/phase-15-plan.md` §7).
+- **`lint`** — `npm run lint:check` (`eslint`, no `--fix`) and `nest build` (the
+  typecheck), both **blocking** as of Phase 16 (`docs/phase-16-plan.md`).
 - **`test`** — creates `smart_inventory_test`, runs `npm test` (unit + integration).
 - **`e2e`** — creates `smart_inventory_e2e`, runs the **whole migration chain from
   empty**, then `npm run test:e2e`. Nothing else exercises the migrations from scratch.
+
+Line endings are normalised to LF by `.gitattributes` (Phase 16) so a lint run means
+the same bytes on Windows and on the Linux runner.
 
 It uses no secrets — every value is a throwaway dev default. **CI is not yet a required
 check**: a red run does not block a push (that's a repository setting, deferred until
@@ -154,7 +156,18 @@ See `docs/learning-notes/ci-and-environments.md`.
 
 ## Current phase
 
-Phase 15 — Continuous integration (`docs/phase-15-plan.md`): a CI pipeline
+Phase 16 — A clean, blocking lint (`docs/phase-16-plan.md`): the `lint` job Phase 15
+wired was `continue-on-error` — it reported, it did not gate. This phase gets `eslint`
+to exit `0` on the backend tree (an `eslint --fix` sweep for the 24 auto-fixable
+errors, committed alone as `style:`; one rule — `no-unsafe-call` — relaxed in the
+existing test-file override for supertest response bodies; two dead vars removed), adds
+a `--fix`-free `lint:check` script for CI, adds `.gitattributes` so a lint run is
+byte-identical on Windows and Linux, and removes `continue-on-error` so the eslint step
+now **blocks**. No application behaviour, no migration, no domain document changed; the
+full backend suite is unchanged (14/143, 7/90). Branch protection is now a one-click
+follow-on, still deferred until a second contributor (`docs/phase-16-plan.md` §7).
+
+Earlier phases: Phase 15 — Continuous integration (`docs/phase-15-plan.md`): a CI pipeline
 (`.github/workflows/ci.yml`) that runs lint, the unit + integration suite, and the e2e
 suite against a clean `postgres:17` on every push and pull request. **No application
 code, no test, no migration changed** — it runs the suite that already existed. It also

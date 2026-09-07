@@ -236,3 +236,9 @@ These affect the UI mockup and should be resolved before or during that phase.
   use case, §7 gains no scope, and no application code changes at all — a test pipeline
   is an engineering practice. It resolves none of §10's open questions — Q-4 (sale
   concept) and Q-7 (multi-location) remain exactly as open as before.
+- **[Added 2026-09-07, Phase 16]** A clean, blocking lint (`docs/phase-16-plan.md`,
+  `requirements.md`'s Phase 16 note, `docs/architecture-observations.md`'s Phase 15
+  section, extended). Same shape as the Phase 15 entry — an engineering-practice change:
+  the CI `lint` step now blocks, and the eslint tree is clean. §4/§5/§7 unchanged; no
+  application behaviour, no migration, no `domain-model.md` change. Q-4 and Q-7 remain
+  open.

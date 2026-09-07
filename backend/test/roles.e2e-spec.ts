@@ -266,6 +266,64 @@ describe('Roles / authorization (e2e)', () => {
     expect(res.status).toBe(201);
   });
 
+  // Phase 18 (docs/phase-18-plan.md), resolving product.md Q-4 — FR-025 / BR-023.
+  it('records an optional stock-out reason category, and validates it', async () => {
+    const product = await asOwner(
+      request(app.getHttpServer()).post('/products'),
+    ).send({ name: 'Widget', sku: 'W-1', unit: 'each' });
+    const id = product.body.id;
+    await asOwner(
+      request(app.getHttpServer()).post(`/products/${id}/stock-in`),
+    ).send({ quantity: 20, occurredAt: '2026-08-01' });
+
+    // a valid category round-trips onto the transaction and its history read
+    const sale = await asStaff(
+      request(app.getHttpServer()).post(`/products/${id}/stock-out`),
+    ).send({ quantity: 3, occurredAt: '2026-08-02', reasonCategory: 'sale' });
+    expect(sale.status).toBe(201);
+    expect(sale.body.reasonCategory).toBe('sale');
+
+    const history = await asStaff(
+      request(app.getHttpServer()).get(`/products/${id}/transactions`),
+    );
+    expect(history.body[0].reasonCategory).toBe('sale');
+
+    // no category is still fine — FR-021 is unchanged
+    const noCategory = await asStaff(
+      request(app.getHttpServer()).post(`/products/${id}/stock-out`),
+    ).send({ quantity: 2, occurredAt: '2026-08-03' });
+    expect(noCategory.status).toBe(201);
+    expect(noCategory.body.reasonCategory).toBeNull();
+
+    // an unknown value is rejected
+    const bogus = await asStaff(
+      request(app.getHttpServer()).post(`/products/${id}/stock-out`),
+    ).send({
+      quantity: 1,
+      occurredAt: '2026-08-04',
+      reasonCategory: 'giveaway',
+    });
+    expect(bogus.status).toBe(400);
+
+    // 'other' requires the free-text note (BR-023)
+    const otherNoNote = await asStaff(
+      request(app.getHttpServer()).post(`/products/${id}/stock-out`),
+    ).send({ quantity: 1, occurredAt: '2026-08-05', reasonCategory: 'other' });
+    expect(otherNoNote.status).toBe(400);
+
+    const otherWithNote = await asStaff(
+      request(app.getHttpServer()).post(`/products/${id}/stock-out`),
+    ).send({
+      quantity: 1,
+      occurredAt: '2026-08-06',
+      reasonCategory: 'other',
+      reason: 'Cleared a discontinued line',
+    });
+    expect(otherWithNote.status).toBe(201);
+    expect(otherWithNote.body.reasonCategory).toBe('other');
+    expect(otherWithNote.body.reason).toBe('Cleared a discontinued line');
+  });
+
   // Phase 12 (docs/phase-12-plan.md §1) AMENDS BR-072. Either role may still
   // *initiate* an adjustment on the same route, but a Staff-initiated adjustment no
   // longer becomes a transaction directly: it is a pending request (202 +

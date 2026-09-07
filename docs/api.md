@@ -1,6 +1,6 @@
-# API Documentation — Phase 17
+# API Documentation — Phase 18
 
-Status: Phase 17 — Searchable / Typeahead Pickers
+Status: Phase 18 — Structured Stock-Out Reason Categories
 Base URL: `http://localhost:3000` (see `backend/.env.example`)
 
 Every resource response includes `createdAt` (an ISO timestamp, server-set, never
@@ -154,20 +154,30 @@ unbounded-read note is retired for the first two and survives on that one path �
 
 ## Inventory (writes — under a product)
 
-Open to any authenticated user, either role (BR-072). Stock-in and stock-out are
-unchanged. `POST /products/:id/adjustments` is handled by `AdjustmentsController` as of
-Phase 12 (the path is unchanged — Nest routes by decorator, not by module) and has two
+Open to any authenticated user, either role (BR-072). Stock-in is unchanged;
+`POST /products/:id/stock-out` gains an optional `reasonCategory` in Phase 18 (below).
+`POST /products/:id/adjustments` is handled by `AdjustmentsController` as of Phase 12
+(the path is unchanged — Nest routes by decorator, not by module) and has two
 outcomes:
 
 | Method | Path | Body | Caller | Response | Notes |
 |---|---|---|---|---|---|
 | POST | `/products/:id/stock-in` | `{ quantity, occurredAt, supplierId? }` | either | `201` + `InventoryTransaction` | 409 if product inactive or supplier inactive/missing |
-| POST | `/products/:id/stock-out` | `{ quantity, occurredAt, reason? }` | either | `201` + `InventoryTransaction` | 409 if product inactive or `quantity` exceeds current stock |
+| POST | `/products/:id/stock-out` | `{ quantity, occurredAt, reason?, reasonCategory? }` | either | `201` + `InventoryTransaction` | 409 if product inactive or `quantity` exceeds current stock. `400` if `reasonCategory` is not one of the set below, or is `other` with no `reason` |
 | POST | `/products/:id/adjustments` | `{ newQuantity, occurredAt, reason }` | **Owner** | `201` + `InventoryTransaction` | Recorded immediately (unchanged). Allowed even if product inactive; `400` if `newQuantity` equals current stock (no-op) |
 | POST | `/products/:id/adjustments` | `{ newQuantity, occurredAt, reason }` | **Staff** | `202` + `AdjustmentRequest` | A pending request — **stock does not change**. `404` if the product is missing; `400` if `occurredAt` is in the future |
 
 `quantity`/`newQuantity` must be whole numbers (`newQuantity >= 0`, `quantity >= 1`).
 `occurredAt` is an ISO date string and cannot be in the future.
+
+**`reasonCategory` on stock-out (Phase 18, optional — resolves `product.md` Q-4).**
+One of `sale`, `internal_use`, `damaged`, `lost`, `expired`, `return`, `other`, or
+omitted entirely (FR-021 is unchanged — a stock-out needs no reason). When it is
+`other`, `reason` (the free-text note) is required and must be non-empty (BR-023). The
+value is stored on the immutable transaction row and appears on `InventoryTransaction`
+in both Inventory reads below (`reasonCategory`, `null` for stock-in, adjustment, and
+any stock-out recorded before Phase 18). A category is meaningful only on a stock-out
+— the column is `NULL` on every other type, enforced by a DB `CHECK`.
 
 ## Adjustment Requests (Phase 12)
 

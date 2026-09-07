@@ -35,7 +35,7 @@ the system exists to support this core.
 | Inventory Transaction | Yes | Core — the single source of truth for all stock movement (stock-in, stock-out, adjustment are three *types* of the same concept, not three separate entities). |
 | "Current Stock" as its own entity | No, modeled as a derived value | Current stock is a computed projection of a product's transactions, not an independently-owned entity with its own lifecycle (BR-040, BR-042). It may be *materialized* for performance later, but conceptually it is not a first-class domain entity. |
 | User | Yes, minimal | Needed for transaction attribution and login; role/permission modeling deferred. |
-| Sale / Order | Not included (Future) | Only relevant if Q-4 (product.md) resolves toward stock-out modeling a sale with price/customer. Not part of the current concept. |
+| Sale / Order | Not included (Future) | Q-4 (product.md) is **resolved** (Phase 18) toward the lighter form: a stock-out carries an optional `reasonCategory`, and `sale` is one value in that enum — no customer, no price, no line items (Q-1). A first-class Sale/Order entity would only be needed to record *who* bought something or to itemise one outbound movement, neither of which is in scope; it stays Future. See BR-023, `docs/phase-18-plan.md`. |
 | Purchase Order | Not included (Future) | Procurement workflow is explicitly postponed. |
 | Warehouse / Location | Not included (Future) | Single-location assumption (A-1). |
 | Audit Event | Yes, as supporting [Added 2026-08-25, Phase 9] | Records who did what, to what, and when — for authentication and administrative writes. Owns no invariants of the core domain; the core domain (stock movement) functions identically whether or not this entity exists. See `docs/phase-9-plan.md`. |
@@ -65,7 +65,8 @@ The central entity of the domain. Represents a single, immutable event that chan
 product's stock. Responsible for recording: the product affected, the transaction type
 (Stock-In / Stock-Out / Adjustment), the quantity delta, the date/time, the user who
 performed it, and type-specific context (supplier for stock-in; reason for adjustment;
-optional reason for stock-out). Once created, a transaction is never modified or removed.
+an optional reason and an optional reason category for stock-out — Phase 18, BR-023).
+Once created, a transaction is never modified or removed.
 
 ### User
 Represents a person operating the system. Holds real login credentials (a unique email and
@@ -120,6 +121,9 @@ Current stock for a Product is derived by aggregating all of its Inventory Trans
   new transactions (adjustments). (BR-051)
 - A Stock-In or Stock-Out transaction cannot be created against an Inactive Product. (BR-013)
 - An Adjustment transaction always carries a reason. (BR-032)
+- A Stock-Out transaction may carry an optional reason category from a fixed set; no
+  other transaction type may (a DB `CHECK`). When the category is `other`, the
+  free-text reason note is mandatory. (BR-023) [Phase 18]
 - A Product with any existing Inventory Transaction history cannot be deleted, only
   deactivated. (BR-004) A Product with a *pending* Adjustment Request also cannot be
   deleted. (BR-089) [Phase 12]

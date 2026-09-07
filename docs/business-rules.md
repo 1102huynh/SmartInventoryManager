@@ -45,6 +45,19 @@ involved.
   confirmed.) → FR-021, BR-041
 - **BR-022** [Assumption] — **Validation.** Quantity must be a positive whole number and
   cannot exceed current available stock. → FR-021
+- **BR-023** [Decided 2026-09-07, Phase 18] — **Optional reason category.** A stock-out
+  may carry a `reasonCategory` from a fixed, closed set — `sale`, `internal_use`,
+  `damaged`, `lost`, `expired`, `return`, `other` — or none at all (FR-021 is
+  unchanged: the reason has always been optional). When the category is `other`, the
+  free-text `reason` note is **mandatory and non-empty** — an unexplained "Other"
+  carries no information, the same posture BR-032 takes for adjustments. A reason
+  category is meaningful **only on a stock-out**: `inventory_transactions` has a DB
+  `CHECK` (`type = 'stock_out' OR reason_category IS NULL`), mirrored by the entity's
+  `@Check` decorator, so a stock-in or adjustment can never carry one. The value is
+  part of the immutable transaction row (BR-051) — a correction is a new transaction,
+  never an edit. `sale` is the lightest possible modelling of a sale: one enum value,
+  no customer, no price (Q-1). Resolves `product.md` Q-4; a full `Sale`/`Order` entity
+  stays Future. → FR-025, FR-021, BR-051
 
 ## Adjustment
 
@@ -75,7 +88,8 @@ involved.
 - **BR-050** [Confirmed] — **What must be recorded.** Every stock-in, stock-out, and
   adjustment transaction must record: product, transaction type, quantity, date/time, and
   the user who performed it. Stock-in additionally records the supplier (if applicable);
-  adjustments additionally record the reason. → FR-030, FR-031, FR-061
+  adjustments additionally record the reason; a stock-out may additionally record a
+  reason category and a free-text note (BR-023, Phase 18). → FR-030, FR-031, FR-061
 - **BR-051** [Confirmed] — **Immutability.** Recorded transactions cannot be edited or
   deleted. Corrections are made by recording a new adjustment transaction, never by altering
   history. → FR-022, FR-030
@@ -334,6 +348,17 @@ exactly what they said before. The category `productCount` is a `COUNT(*)` compu
 read via a subquery join — the same "current stock is `SUM(quantity_delta)`, never a
 stored column" posture as BR-040/042, one table over. `requirements.md`'s Phase 17
 note carries the "these FRs are unchanged" reading.
+
+**[2026-09-07, Phase 18]** One new BR — **BR-023** (above), the first new BR since
+Phase 12. `docs/phase-18-plan.md` resolves `product.md` Q-4 in its lighter form: an
+optional stock-out `reasonCategory` from a fixed set, stored as a real enum column
+(migration `1787930000000`) and guarded by a DB `CHECK` that only a stock-out row may
+carry one. FR-021 is unchanged — a stock-out with no category is still valid, and no
+existing row, seed, or API caller had to change (the column is nullable, no default,
+no backfill). This is a genuine new rule, not a "no new BR" note: it is what closes
+the oldest open product question, and "sale" as one enum value is the deliberate
+lightweight answer to "do we need a `Sale`/`Order` entity" — no (a full one stays
+Future, `product.md` §7).
 
 ## Adjustment Approval
 

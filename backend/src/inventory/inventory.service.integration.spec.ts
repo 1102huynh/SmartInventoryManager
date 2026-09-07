@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { EntityStatus } from '../common/enums/entity-status.enum';
+import { StockOutReason } from '../common/enums/stock-out-reason.enum';
 import { TransactionType } from '../common/enums/transaction-type.enum';
 import { UserRole } from '../common/enums/user-role.enum';
 import { createTestDataSource } from '../database/test-data-source';
@@ -110,6 +111,52 @@ describe('InventoryService (integration)', () => {
       userId,
     );
     expect(await service.getCurrentStock(productId)).toBe(6);
+  });
+
+  // Phase 18 (docs/phase-18-plan.md), product.md Q-4 / FR-025 / BR-023.
+  it('persists a stock-out reason category, and leaves it null when none is given', async () => {
+    await service.recordStockIn(
+      productId,
+      { quantity: 20, occurredAt: '2026-08-01' },
+      userId,
+    );
+
+    const withCategory = await service.recordStockOut(
+      productId,
+      {
+        quantity: 3,
+        occurredAt: '2026-08-02',
+        reasonCategory: StockOutReason.SALE,
+      },
+      userId,
+    );
+    expect(withCategory.reasonCategory).toBe(StockOutReason.SALE);
+
+    const withoutCategory = await service.recordStockOut(
+      productId,
+      { quantity: 2, occurredAt: '2026-08-03' },
+      userId,
+    );
+    expect(withoutCategory.reasonCategory).toBeNull();
+
+    const reread = await dataSource
+      .getRepository(InventoryTransaction)
+      .findOneByOrFail({ id: withCategory.id });
+    expect(reread.reasonCategory).toBe(StockOutReason.SALE);
+  });
+
+  // BR-023: a reason category is only meaningful on a stock_out row — the DB @Check
+  // (mirrored by the 1787930000000 migration) is the backstop behind the service,
+  // which never sets it on stock-in / adjustment.
+  it('the database rejects a non-stock-out row that carries a reason category', async () => {
+    await expect(
+      dataSource.query(
+        `INSERT INTO inventory_transactions
+           (product_id, type, quantity_delta, occurred_at, recorded_by_user_id, reason_category)
+         VALUES ($1, 'stock_in', 1, '2026-08-01', $2, 'sale')`,
+        [productId, userId],
+      ),
+    ).rejects.toThrow();
   });
 
   // BR-021 / BR-041: this is the rule a bug here would violate most visibly.

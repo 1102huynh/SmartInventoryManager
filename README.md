@@ -128,9 +128,12 @@ npm test        # node --test: the paging logic (Phase 14, Fork G)
 See `docs/learning-notes/testing-strategy.md` for what each of these actually proves.
 The frontend suite is the first one it has — `pager.test.js` covers the pure pager
 arithmetic, `products-list.test.js` (jsdom) covers the reset-to-page-1-on-filter
-behaviour, and (Phase 17) `typeahead.test.js` / `history-filter.test.js` (jsdom) cover
+behaviour, (Phase 17) `typeahead.test.js` / `history-filter.test.js` (jsdom) cover
 the search-as-you-type picker — debounce, the stale-response guard, select/clear, and
-that the History filter re-requests by product id.
+that the History filter re-requests by product id — and (Phase 18)
+`stock-out-reason.test.js` (jsdom) covers the stock-out reason-category picker: the
+fixed set of options, "Other" making the note required, and `reasonCategory` reaching
+the request payload.
 
 **The two test databases** (`smart_inventory_test` for integration, `smart_inventory_e2e`
 for e2e) are separate from the dev `smart_inventory`, and the local setup for them was
@@ -176,25 +179,32 @@ See `docs/learning-notes/ci-and-environments.md`.
 
 ## Current phase
 
-Phase 17 — Searchable / typeahead pickers (`docs/phase-17-plan.md`): finishes the job
-Phase 14 §7 named. Three catalogue reads still fetched **every** row for a non-screen
-caller — the stock-in wizard's supplier `<select>`, the Inventory History
-product-filter `<select>`, and the Categories screen's client-side product count. The
-two `<select>`s are now **search-as-you-type** controls (`frontend/typeahead.js`, a new
-shared module) that query `GET /suppliers?search=&status=active` and
-`GET /products?search=` a page at a time, and say `+N more — keep typing to narrow`
-when there is more to find rather than dropping it silently. The Categories count is a
-server-side `productCount` on the paged `GET /categories` read (a computed column, the
-Phase 14 Fork B pattern). After this, `GET /products` and `GET /suppliers` have **no
-caller that wants the whole set**; only `GET /categories` does, via the small
-`CATEGORIES` reference cache, which is left unbounded on purpose (a dozen categories is
-a `<select>`, not a search box). **No migration this phase** — a computed column in a
-read is not a schema change — and no domain document changes: no new FR (a field you
-type into to filter its options is a screen affordance), no new BR, no new route or
-entity. `serve.js` is still byte-for-byte unchanged and running the app still needs no
-`npm install`. See `docs/architecture-observations.md`'s Phase 17 section for the
-unbounded-read precondition now closed for two of three routes, and why the third is
-deliberately left.
+Phase 18 — Structured stock-out reason categories (`docs/phase-18-plan.md`): resolves
+`product.md` Q-4, open since Phase 5. A stock-out can now carry an **optional** reason
+category from a fixed set — `sale`, `internal_use`, `damaged`, `lost`, `expired`,
+`return`, `other` — stored as a real `reason_category` enum column on
+`inventory_transactions` (so it can be filtered and reported on, not just typed into a
+note). `other` requires the free-text note. The stock-out wizard gets a picker; the
+Inventory History and product-detail history screens show the category. **"Sale" is one
+value in an enum** — no customer, no price (Q-1), no `Sale`/`Order` entity; a full one
+stays Future. FR-021 is unchanged — a stock-out with no category is still valid, and
+every pre-Phase-18 row and API caller keeps working (the column is nullable, no
+default, **no backfill**). One new **FR-025** (Should) and one new **BR-023**;
+`domain-model.md`, `api.md`, and `product.md` §10 (Q-4 now Resolved) all updated.
+**There is a migration this phase** (`1787930000000-AddStockOutReasonCategory`), unlike
+Phases 14–17 — run `npm run migration:run` after pulling. `serve.js` is still
+byte-for-byte unchanged and running the frontend still needs no `npm install`. See
+`docs/architecture-observations.md`'s Phase 18 section for the additive-nullable-enum
+pattern and the three-registries `@Check`.
+
+Earlier phases: Phase 17 — Searchable / typeahead pickers (`docs/phase-17-plan.md`):
+finishes the job Phase 14 §7 named. The stock-in wizard's supplier `<select>` and the
+Inventory History product-filter `<select>` are now **search-as-you-type** controls
+(`frontend/typeahead.js`, a shared module) that query `GET /suppliers?search=&status=active`
+and `GET /products?search=` a page at a time; the Categories screen's client-side
+product count is a server-side `productCount` on the paged `GET /categories` read. No
+migration, no domain document change — a field you type into to filter its options is a
+screen affordance.
 
 Earlier phases: Phase 16 — A clean, blocking lint (`docs/phase-16-plan.md`): the `lint` job Phase 15
 wired was `continue-on-error` — it reported, it did not gate. This phase gets `eslint`

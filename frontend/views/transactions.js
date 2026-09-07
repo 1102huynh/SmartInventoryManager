@@ -15,6 +15,10 @@ const REASON_OPTIONS = [
   ['correction', 'Data-entry correction'],
   ['other', 'Other'],
 ];
+// Phase 18 (docs/phase-18-plan.md), resolving product.md Q-4: the fixed set of
+// stock-out reason categories (FR-025) lives on UI.STOCK_OUT_REASONS so the two
+// history views can share the value→label lookup. Picking one is optional; 'other'
+// requires the free-text note.
 const TITLES = { 'stock-in': 'Stock In', 'stock-out': 'Stock Out', 'adjustment': 'Adjust Stock' };
 
 export function transactionWizard(container, productId, type){
@@ -108,7 +112,15 @@ export function transactionWizard(container, productId, type){
       </div>` : `
       <div class="field">
         <label>Reason</label>
-        <input type="text" id="f-reason" value="${UI.esc(form.reason)}" placeholder="Optional, e.g. Sold at counter">
+        <select id="f-reason-cat">
+          <option value="">— Optional: select a reason —</option>
+          ${UI.STOCK_OUT_REASONS.map(([v,l]) => `<option value="${v}" ${v===form.reasonCategory?'selected':''}>${l}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field${errors.reason ? ' has-error' : ''}">
+        <label>Note${form.reasonCategory === 'other' ? ' <span class="req">*</span>' : ''}</label>
+        <input type="text" id="f-reason" value="${UI.esc(form.reason)}" placeholder="${form.reasonCategory === 'other' ? 'Describe the reason' : 'Optional, e.g. Sold at counter'}">
+        ${errors.reason ? `<div class="error">${errors.reason}</div>` : ''}
       </div>`}
     `;
   }
@@ -149,9 +161,13 @@ export function transactionWizard(container, productId, type){
     const current = product.currentStock;
     const delta = computeDelta();
     const after = current + delta;
+    // Phase 18: stock-out shows its category label, with the free-text note appended
+    // when there is one ("Sale — cleared the last two cases"). Stock-in has neither,
+    // so reasonText stays '' and the review row is hidden.
+    const soCat = type === 'stock-out' && form.reasonCategory ? UI.stockOutReason(form.reasonCategory) : '';
     const reasonText = type === 'adjustment'
       ? (form.reasonCategory === 'other' ? form.reasonOther : (REASON_OPTIONS.find(r => r[0] === form.reasonCategory) || [,''])[1])
-      : form.reason;
+      : (soCat && form.reason.trim() ? `${soCat} — ${form.reason.trim()}` : (soCat || form.reason));
     const supplierName = form.supplierId ? form.supplierLabel : null;
     return `<div class="wizard-wrap">
       <div class="card card-pad">
@@ -225,6 +241,11 @@ export function transactionWizard(container, productId, type){
       // Phase 17: the supplier typeahead keeps form.supplierId / form.supplierLabel
       // current via its onSelect — there is no field to read back here.
       if (type !== 'stock-in') form.reason = container.querySelector('#f-reason').value;
+      // Phase 18: the stock-out reason category (FR-025).
+      if (type === 'stock-out'){
+        const rc = container.querySelector('#f-reason-cat');
+        if (rc) form.reasonCategory = rc.value;
+      }
     }
     form.date = container.querySelector('#f-date').value;
   }
@@ -241,6 +262,8 @@ export function transactionWizard(container, productId, type){
       const n = Number(form.quantity);
       if (form.quantity === '' || !Number.isInteger(n) || n <= 0) e.quantity = 'Enter a whole number greater than 0.';
       else if (type === 'stock-out' && n > current) e.quantity = `Only ${current} ${product.unit} available — cannot remove ${n}.`;
+      // Phase 18 (BR-023): a category is optional, but 'Other' needs the note.
+      if (type === 'stock-out' && form.reasonCategory === 'other' && !form.reason.trim()) e.reason = 'Add a note describing the reason.';
     }
     if (!form.date) e.date = 'Select a date.';
     else if (form.date > todayInputValue()) e.date = 'Date cannot be in the future.';
@@ -261,10 +284,12 @@ export function transactionWizard(container, productId, type){
         if (Object.keys(errors).length){ render(); return; }
         step = 'review'; render();
       });
-      const rc = container.querySelector('#f-reason-cat');
-      // Sync every field from the DOM before re-rendering — otherwise the fields we
+      // #f-reason-cat is the adjustment reason picker AND (Phase 18) the stock-out one.
+      // Re-render on change so the "Other" note's required marker / placeholder tracks
+      // the selection. Sync every field from the DOM first — otherwise the fields we
       // don't explicitly track here (quantity/date already typed) would be wiped out
       // by the next render, which rebuilds the form HTML from `form` state.
+      const rc = container.querySelector('#f-reason-cat');
       if (rc) rc.addEventListener('change', () => { readForm(); render(); container.querySelector('#f-reason-cat')?.focus(); });
       // Phase 17: stock-in's supplier picker. onSelect keeps form.supplierId /
       // form.supplierLabel current; `initial` re-seeds it after a validation re-render.
@@ -287,7 +312,7 @@ export function transactionWizard(container, productId, type){
         // .../stock-out, .../adjustments) — see Store, above.
         let call;
         if (type === 'stock-in') call = Store.recordStockIn(product.id, { quantity: form.quantity, date: form.date, supplierId: form.supplierId }).then(tx => ({ recorded: true, tx }));
-        else if (type === 'stock-out') call = Store.recordStockOut(product.id, { quantity: form.quantity, date: form.date, reason: form.reason }).then(tx => ({ recorded: true, tx }));
+        else if (type === 'stock-out') call = Store.recordStockOut(product.id, { quantity: form.quantity, date: form.date, reason: form.reason, reasonCategory: form.reasonCategory }).then(tx => ({ recorded: true, tx }));
         // Phase 12: recordAdjustment resolves to a discriminated result. `requested`
         // means a Staff member's count is now a pending request that changed no stock.
         else call = Store.recordAdjustment(product.id, {
@@ -389,10 +414,20 @@ export function historyView(container, query){
     </table></div>`;
   }
 
+  // Phase 18: a stock-out row shows its reason category (FR-025), with the free-text
+  // note appended when present. Adjustments and pre-Phase-18 stock-outs have no
+  // category and fall back to the note alone, exactly as before.
+  function reasonDetail(t){
+    const label = t.reasonCategory ? UI.stockOutReason(t.reasonCategory) : '';
+    if (label && t.reason) return `${UI.esc(label)} <span class="cell-sub">— ${UI.esc(t.reason)}</span>`;
+    if (label) return UI.esc(label);
+    return t.reason ? UI.esc(t.reason) : '<span class="cell-sub">—</span>';
+  }
+
   function rowHtml(t){
     const detail = t.type === 'stock-in'
       ? (t.supplier ? UI.esc(t.supplier.name) : '<span class="cell-sub">No supplier recorded</span>')
-      : (t.reason ? UI.esc(t.reason) : '<span class="cell-sub">—</span>');
+      : reasonDetail(t);
     return `<tr class="clickable" data-goto="#/products/${t.productId}">
       <td class="cell-sub">${UI.fmtDateTime(t.date)}</td>
       <td class="cell-name">${UI.esc(t.product ? t.product.name : 'Unknown')}</td>

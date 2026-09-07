@@ -92,6 +92,24 @@ export const UI = {
     if (type === 'stock-out') return '<span class="badge badge-type-out">Stock Out</span>';
     return '<span class="badge badge-type-adj">Adjustment</span>';
   },
+  // Phase 18 (docs/phase-18-plan.md), resolving product.md Q-4: the fixed set of
+  // stock-out reason categories (FR-025), mirroring the backend StockOutReason enum
+  // (backend/src/common/enums/stock-out-reason.enum.ts) — keep the two in step. The
+  // stock-out wizard renders these as <option>s; the two history views turn a stored
+  // value back into its label with UI.stockOutReason().
+  STOCK_OUT_REASONS: [
+    ['sale', 'Sale'],
+    ['internal_use', 'Internal use'],
+    ['damaged', 'Damaged'],
+    ['lost', 'Lost / theft'],
+    ['expired', 'Expired'],
+    ['return', 'Returned to supplier'],
+    ['other', 'Other'],
+  ],
+  stockOutReason(value){
+    const m = UI.STOCK_OUT_REASONS.find(r => r[0] === value);
+    return m ? m[1] : (value || '');
+  },
   // Keyed by category NAME rather than a fixed id — Phase 1 used hand-picked ids
   // like 'cat-bev'; the database assigns its own numeric ids on seed, so the name is
   // the only stable thing left to color by.

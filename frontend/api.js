@@ -371,9 +371,12 @@ export const Store = {
     });
     return normalizeTx(tx);
   },
-  async recordStockOut(productId, { quantity, date, reason }){
+  async recordStockOut(productId, { quantity, date, reason, reasonCategory }){
     const tx = await this._request('POST', `/products/${productId}/stock-out`, {
-      quantity: Number(quantity), occurredAt: date, reason: reason || undefined,
+      quantity: Number(quantity), occurredAt: date,
+      reason: reason || undefined,
+      // Phase 18 (docs/phase-18-plan.md): optional structured reason (FR-025).
+      reasonCategory: reasonCategory || undefined,
     });
     return normalizeTx(tx);
   },

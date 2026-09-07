@@ -17,16 +17,9 @@ on:
 
 jobs:
   # ------------------------------------------------------------------ lint + typecheck
-  # No database. `nest build` is the real, blocking typecheck — it is clean on the
-  # committed tree.
-  #
-  # `npm run lint` is `eslint --fix`: it *mutates* files rather than checking them, and
-  # the committed tree has pre-existing eslint errors it cannot auto-fix (6 as of Phase
-  # 15 — unused vars and no-unsafe-call in three spec files) plus ~12 files that are not
-  # prettier-clean. Wiring CI is what surfaced this (docs/phase-15-plan.md §"why now").
-  # So the lint step runs for visibility but does NOT fail the build (continue-on-error);
-  # a proper lint gate — a --fix-free script plus clearing those errors — is a named
-  # follow-up (docs/phase-15-plan.md §7, docs/architecture-observations.md Phase 15).
+  # No database. Both steps are blocking. `lint:check` is `eslint` with no --fix — it
+  # checks, it does not rewrite (Phase 16, docs/phase-16-plan.md Forks D/E). `nest
+  # build` is the typecheck. The tree is clean under both as of Phase 16.
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -38,10 +31,9 @@ jobs:
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
         working-directory: backend
-      - name: eslint (informational — see job comment)
-        run: npm run lint
+      - name: eslint (check mode, no --fix)
+        run: npm run lint:check
         working-directory: backend
-        continue-on-error: true
       - name: typecheck (nest build)
         run: npm run build
         working-directory: backend

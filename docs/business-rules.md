@@ -319,6 +319,11 @@ same query now). `requirements.md`'s Phase 14 note carries the FR-004 "all" read
 the counterpart to Phase 11's FR-030/031 note. (Landed after Phase 15 in wall-clock —
 CI was built first — but numbered before it.)
 
+**[2026-09-07, Phase 16]** No new BR — the sixth such line. `docs/phase-16-plan.md`
+makes the CI `lint` step blocking and clears the eslint tree (a formatting sweep, one
+test-only rule relaxed, two dead variables removed). It changes no business behaviour:
+the full backend suite passes unchanged (14/143, 7/90).
+
 ## Adjustment Approval
 
 - **BR-085** [Decided 2026-09-03, Phase 12] — **A Staff-initiated adjustment is a

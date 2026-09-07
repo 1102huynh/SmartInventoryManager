@@ -448,8 +448,37 @@ phases; every "full suite green" in a DoD checklist meant the tests, never a cle
 lint, because `--fix` silently rewrites on each local run and the residual errors
 scroll past. Handled without widening the phase: the `lint` job gates on `nest build`
 (the clean typecheck) and runs eslint as a non-blocking informational step; a real
-lint gate — a `--fix`-free script plus fixing the six errors — is a follow-up
+lint gate — a `--fix`-free script plus fixing the errors — is a follow-up
 (`docs/phase-15-plan.md` §7).
+
+**[Phase 16, `docs/phase-16-plan.md`] — the lint step went from informational to
+blocking.** A clean check-mode run turned out to be 29 errors across ~15 files, not the
+six the mid-`--fix` count showed: 24 auto-fixable (prettier wrapping, two redundant
+`as` casts), and — after `--fix` — six manual (four `no-unsafe-call` on supertest
+response bodies, two orphaned imports/vars). What "clean" required:
+
+- **A mechanical `eslint --fix` sweep**, committed alone as `style:` so its 12-file
+  diff reviews as formatting and never rides with a behaviour change (the rule Phases
+  12 and 13 applied to their refactors). Two migration files were touched — a
+  class-declaration line-wrap only; `up()`/`down()` are byte-unchanged and nothing
+  re-ran.
+- **One rule relaxed in the existing test-file override**:
+  `@typescript-eslint/no-unsafe-call: 'off'` joins its four `unsafe-*` siblings under
+  `files: ['**/*.spec.ts', 'test/**/*.ts']`, on the rationale the block's own comment
+  already makes — a call on `res.body` from supertest is `any` by the nature of the
+  boundary. Confirmed still active in `src/`.
+- **`.gitattributes` (`* text=auto eol=lf`)** so a lint run is byte-deterministic
+  across a Windows dev box (`core.autocrlf=true`, CRLF working tree) and the Linux
+  runner. `git add --renormalize .` produced no content change — the blobs were
+  already LF.
+- **A `lint:check` script** (`eslint` with no `--fix`) for CI; `lint` stays `--fix`
+  for the local fix-on-save habit. The `ci.yml` eslint step runs `lint:check` and its
+  `continue-on-error` is gone.
+
+**Branch protection is now genuinely one click** — the only real blocker, a lint check
+that could never pass, is gone. It stays unflipped because Phase 15 Fork F's trigger
+(a second contributor) still has not fired; `docs/phase-16-plan.md` §7 carries the
+exact repository settings for the day it does.
 
 **CI is the first thing that runs the migration chain against an empty database.**
 Phases 10 and 12 shipped migrations; a local `smart_inventory` / `smart_inventory_e2e`

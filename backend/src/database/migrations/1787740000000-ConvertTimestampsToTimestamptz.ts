@@ -49,9 +49,7 @@ const SOURCE_ZONE = 'Asia/Ho_Chi_Minh';
 // prevent on a deployment where the two aren't equal.
 const SOURCE_ZONE_NODE = 'Asia/Ho_Chi_Minh';
 
-export class ConvertTimestampsToTimestamptz1787740000000
-  implements MigrationInterface
-{
+export class ConvertTimestampsToTimestamptz1787740000000 implements MigrationInterface {
   name = 'ConvertTimestampsToTimestamptz1787740000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

@@ -26,9 +26,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 // Migrating the existing audit columns to timestamptz is a real, separate,
 // schema-wide question, deliberately not resolved here — see
 // docs/architecture-observations.md.
-export class AddAuditTimestampsToUsersAndCategories1787470000000
-  implements MigrationInterface
-{
+export class AddAuditTimestampsToUsersAndCategories1787470000000 implements MigrationInterface {
   name = 'AddAuditTimestampsToUsersAndCategories1787470000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

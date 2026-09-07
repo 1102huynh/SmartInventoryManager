@@ -2,7 +2,6 @@ import { NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EntityStatus } from '../common/enums/entity-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
-import { User } from '../users/user.entity';
 import { UsersService } from '../users/users.service';
 import { JwtStrategy } from './jwt.strategy';
 
@@ -14,7 +13,9 @@ import { JwtStrategy } from './jwt.strategy';
 // validate() now looks the user up by id instead of trusting the payload alone, so
 // it needs a mocked UsersService and became async.
 describe('JwtStrategy', () => {
-  const configService = { get: () => 'test-secret' } as unknown as ConfigService;
+  const configService = {
+    get: () => 'test-secret',
+  } as unknown as ConfigService;
 
   function makeStrategy(usersService: Partial<UsersService>) {
     return new JwtStrategy(configService as any, usersService as UsersService);
@@ -26,7 +27,7 @@ describe('JwtStrategy', () => {
         id: 42,
         role: UserRole.Owner,
         status: EntityStatus.ACTIVE,
-      } as User),
+      }),
     };
     const strategy = makeStrategy(usersService);
 
@@ -46,7 +47,7 @@ describe('JwtStrategy', () => {
         id: 42,
         role: UserRole.Staff,
         status: EntityStatus.INACTIVE,
-      } as User),
+      }),
     };
     const strategy = makeStrategy(usersService);
 

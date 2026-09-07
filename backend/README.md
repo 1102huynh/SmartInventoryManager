@@ -69,7 +69,8 @@ push — see the repo-root `README.md` and `../.github/workflows/ci.yml`.
 ```bash
 npm run build              # compile to dist/
 npm run start:prod         # run the compiled build
-npm run lint                # eslint --fix
+npm run lint                # eslint --fix (local fix-on-save)
+npm run lint:check          # eslint, no --fix — what CI runs (must exit 0)
 npm run migration:generate  # generate a new migration from entity changes
 npm run migration:revert    # roll back the last migration
 ```

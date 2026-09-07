@@ -464,7 +464,9 @@ describe('UsersService', () => {
       repo.findOne.mockResolvedValue(lockedUser);
       await service.setPassword(1, 'a-new-password', ACTOR_ID);
       expect(auditService.record).toHaveBeenCalledWith(
-        expect.objectContaining({ summary: expect.stringMatching(/lock cleared/i) }),
+        expect.objectContaining({
+          summary: expect.stringMatching(/lock cleared/i),
+        }),
       );
 
       jest.clearAllMocks();

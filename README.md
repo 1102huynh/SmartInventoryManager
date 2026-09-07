@@ -4,8 +4,9 @@ A small inventory tracking system for a small business — see `docs/product.md`
 the product vision and `docs/requirements.md` / `docs/business-rules.md` /
 `docs/domain-model.md` for what it actually needs to do.
 
-This is also a learning project: see `docs/learning-notes/` for NestJS concepts
-explained against this project's real code.
+This is also a learning project: see `docs/learning-notes/` for NestJS concepts (and,
+since Phase 13, the frontend's ES-module architecture) explained against this project's
+real code.
 
 [![CI](https://github.com/1102huynh/SmartInventoryManager/actions/workflows/ci.yml/badge.svg)](https://github.com/1102huynh/SmartInventoryManager/actions/workflows/ci.yml)
 

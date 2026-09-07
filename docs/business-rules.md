@@ -360,6 +360,16 @@ the oldest open product question, and "sale" as one enum value is the deliberate
 lightweight answer to "do we need a `Sale`/`Order` entity" — no (a full one stays
 Future, `product.md` §7).
 
+**[2026-09-07, Phase 19]** No new BR — the eighth such line, following Phase 17's
+seventh (Phase 18 added one in between). `docs/phase-19-plan.md` (issue #9) makes
+`DashboardService.getSummary` read products and their current stock in one query
+instead of two, reusing Phase 14 Fork B's grouped-subquery join. It **reaffirms**
+BR-040/BR-042 rather than touching them: current stock is still `SUM(quantity_delta)`
+computed on demand, never a stored or cached column — this phase only moves the `SUM`
+from a second round-trip into the products query. BR-060/BR-061 (low-stock flagging
+needs a configured threshold) and BR-062 (`needsAttention` is the low-stock list only)
+are unchanged and still enforced in the same place, in the same words.
+
 ## Adjustment Approval
 
 - **BR-085** [Decided 2026-09-03, Phase 12] — **A Staff-initiated adjustment is a

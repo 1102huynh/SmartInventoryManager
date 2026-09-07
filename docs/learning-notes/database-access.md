@@ -377,6 +377,16 @@ Points that bite if you don't know them:
   still made `take()` the defensive choice). Count first (`getCount()` — it drops the
   custom `SELECT`, `ORDER BY`, and limit/offset, keeps the joins and `WHERE`), *then*
   apply `.offset(skip).limit(take)` and fetch the page.
+- **Phase 19** extracted this join into `joinCurrentStock(qb, productAlias?)`
+  (`backend/src/inventory/stock-aggregate.query.ts`), with `STOCK_AGG_ALIAS` /
+  `CURRENT_STOCK_EXPR` exported so a caller can add its own expressions over the
+  aggregate. `ProductsService.findAll` uses it *with* paging (the `getCount` → `offset`
+  → `limit` dance above). `DashboardService.getSummary` uses it **without** paging —
+  `joinCurrentStock(repo.createQueryBuilder('product')).orderBy('product.name','ASC')
+  .getRawAndEntities()`, no `getCount`, no window — because that caller genuinely wants
+  every row (a `lowStockCount` summary needs the whole catalogue). Same join, same
+  `raw[i].currentStock` merge; the only difference is whether a page is carved out of
+  the result.
 
 **Offset paging is correct for a catalogue and a skipped-row bug for a log — same
 reason the Phase 11 note gives for `id` tie-breaks.** `OFFSET (page-1)*size` tells the

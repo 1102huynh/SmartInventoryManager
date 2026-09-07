@@ -663,7 +663,9 @@ three-preconditions ledger goes from *two-and-a-half* (Phase 14) to *two-and-a-s
 the throttle store and the best-effort audit write are untouched, and the
 catalogue-reads one is down to a single route whose set is bounded in practice by what
 a shop is. `DashboardService.find()` is a separate whole-catalogue read (issue #9), not
-this precondition — a `lowStockCount` summary inherently needs every product.
+this precondition — a `lowStockCount` summary inherently needs every product. **Phase
+19 addressed that read** (see this file's Phase 19 section): still every product, but
+now in one query, not two.
 
 **The category count reused Phase 14 Fork B's pattern exactly, and shipped no
 migration.** `CategoriesService.findAll`'s paged branch went from `findAndCount` to a
@@ -727,3 +729,47 @@ category and asserts the database rejects it.
 column serialises onto every transaction response with no query-builder edit — in
 contrast to Phase 14's `productCount` / current-stock computed columns, which needed
 `getRawAndEntities` plumbing because they are not stored.
+
+## Cross-cutting: the Fork B stock join becomes a shared helper (Phase 19)
+
+Phase 19 (`docs/phase-19-plan.md`, issue #9) is the follow-on Phase 14 §7 named in so
+many words: `DashboardService.getSummary` stopped reading the whole catalogue with
+`productsRepository.find()` and then making a *second* trip
+(`inventoryService.getCurrentStockMap(everyId)`) to attach current stock. It now runs
+**one** query — products plus a `currentStock` column — the same grouped-subquery
+`SUM(quantity_delta)` join Phase 14 Fork B built for `ProductsService.findAll`.
+
+**This is the instance where the join got extracted rather than copied.** Phase 17
+needed the *pattern* for a different table and aggregate (`COUNT(*)` over `products`)
+and deliberately re-typed it into `CategoriesService.findAll` — an analogy, not a
+duplicate. Phase 19's caller wants the *identical* SQL `findAll` runs, so a third
+verbatim copy of one fragment is exactly the case for a helper:
+`backend/src/inventory/stock-aggregate.query.ts` exports `joinCurrentStock(qb,
+productAlias?)` — it adds the `leftJoin` subquery and the `currentStock` `addSelect`
+and returns the builder — plus `STOCK_AGG_ALIAS` / `CURRENT_STOCK_EXPR` so a caller can
+write its own expressions over the aggregate without restating the alias.
+`ProductsService.findAll` now calls it; its `hasHistory` select and its
+`status=low` / `status=out` `WHERE` conditions layer on top, unchanged. Generated SQL
+is identical — `products.service.integration.spec.ts` passes unedited. **`CategoriesService`
+was left on its own copy**: it joins `products`, not `inventory_transactions`, so
+folding it through this helper would be a forced fit (the `getCurrentStockMap`-style
+method `getHasHistoryMap` that Phase 14 *did* delete is the precedent — remove a
+round-trip, don't over-unify).
+
+**The dashboard summary response is byte-for-byte unchanged**, and the whole e2e suite
+passes with no edit — the Phase 11 §5 rule (a diff in an unrelated spec here would be a
+real regression, not a fixture artefact) is what proves it. The one deliberate
+behaviour change is invisible at that scale: `getSummary`'s product read gained
+`ORDER BY name ASC` (it had no `ORDER BY` before), so when *more than five* products
+are low-stock, `needsAttention` is now "the first five by name" instead of five in
+whatever order an unordered scan produced — the same determinism improvement Phase 11
+made for `recentActivity`'s `id` tie-break, stated not glossed.
+
+**Still no migration** (the fourth phase running — 14, 17, and now 19, with 18 the
+exception — where a reviewer arriving from the Phase 11/12 migration notes should note
+there is nothing to run). A `SUM` computed in a query is not a stored column;
+BR-040/042's "current stock replays from history, never cached" is reaffirmed, not
+bent. What is *not* done: `getSummary` still makes three DB calls total (the
+products+stock query, then Phase 11's bounded `listAll({ limit: 8 })` and
+`countSince(7)` over `inventory_transactions`) — those are cheap bounded reads over a
+different table and merging them in buys little (§7).

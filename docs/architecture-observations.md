@@ -521,15 +521,33 @@ an oversight:
 - **No coverage gate**, no build/dependency caching beyond `setup-node`'s npm cache, no
   jest sharding. The suite is minutes; optimise when it hurts (§7).
 
-**The learning-notes gap this phase names but does not close.** `docs/learning-notes/`
-was last brought current at Phase 8 (`git log` on that directory —
-`9649e0e`). Phases 9–14 added substantial material — the audit log's best-effort write,
-Phase 10's `timestamptz` write/read-zone mechanics, Phase 11's bounded-read convention,
-Phase 12's first row-relationship authorization rule, Phase 13's frontend module
-architecture — with no note. Phase 15 adds **one** new note for its own subject
-(`ci-and-environments.md`) and explicitly does not retro-document six phases as a rider;
-`docs/phase-15-plan.md` §7 names that as its own focused piece of work. Recorded here
-so the gap is on the record and not mistaken for something this phase covered.
+**The learning-notes gap this phase named — reconciled against the history.**
+**[Corrected 2026-09-07, issue #5.]** This entry, `docs/phase-15-plan.md` §7, and
+`docs/phase-16-plan.md` §7 all record `docs/learning-notes/` as "frozen at Phase 8"
+(`9649e0e`), with Phases 9–14 adding substantial material "with no note." The commit
+history does not bear that out — each phase since 9 documented its own subject in the
+notes as part of its `feat` commit:
+
+- **Phase 9** (`7f93fb0`) — `cross-cutting-concerns.md` (new: global interceptor vs.
+  TypeORM entity subscriber vs. explicit service call) and the actor/subject section
+  in `authentication-and-guards.md`. The best-effort audit write is documented in
+  *this* file, above (the in-memory-throttle-store entry), per `docs/phase-9-plan.md`
+  §4 — it was routed here deliberately, not to a learning note.
+- **Phase 10** (`452672f`) — the `timestamp` vs. `timestamptz` section in
+  `database-access.md` and the `TZ`/Jest-bootstrap trap in `testing-strategy.md`.
+- **Phase 11** (`8eb2471`) — the `take` / `addOrderBy` / `limit + 1` probe section in
+  `database-access.md`.
+- **Phase 12** (`7bc90d0`) — the role- vs. ownership-based authorization rule in
+  `authentication-and-guards.md` and the cross-module transaction in
+  `database-transactions.md`.
+- **Phase 15** (`14646d6`) — `ci-and-environments.md` (new).
+
+The one item on the original list with no learning note is **Phase 13's frontend
+module architecture**, and `docs/phase-13-plan.md` §4 made that note explicitly
+optional — the structural account lives in this file, above ("the frontend's first
+structural phase"). The retro-documentation `docs/phase-15-plan.md` §7 anticipated is
+therefore already done, incrementally, by the phases themselves. The two plan §7s are
+left as the historical snapshots they are.
 
 ## Cross-cutting: catalogue paging, and a precondition partly retired (Phase 14)
 

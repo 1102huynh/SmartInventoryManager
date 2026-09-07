@@ -7,6 +7,8 @@ the product vision and `docs/requirements.md` / `docs/business-rules.md` /
 This is also a learning project: see `docs/learning-notes/` for NestJS concepts
 explained against this project's real code.
 
+[![CI](https://github.com/1102huynh/SmartInventoryManager/actions/workflows/ci.yml/badge.svg)](https://github.com/1102huynh/SmartInventoryManager/actions/workflows/ci.yml)
+
 ## Project layout
 
 ```
@@ -114,10 +116,63 @@ npm run test:e2e  # end-to-end (needs Postgres running)
 
 See `docs/learning-notes/testing-strategy.md` for what each of these actually proves.
 
+**The two test databases** (`smart_inventory_test` for integration, `smart_inventory_e2e`
+for e2e) are separate from the dev `smart_inventory`, and the local setup for them was
+previously unwritten. CI (below) creates them from scratch on every run; locally you do
+it once. The portable Postgres in `tools/` is a stripped build with no `createdb`, so
+use the helper script (it resolves its one dependency, `pg`, from `backend/`,
+and runs from any directory):
+
+```
+node tools/create-test-databases.mjs
+cd backend && DB_DATABASE=smart_inventory_e2e npm run migration:run
+```
+
+`smart_inventory_test` needs no migration — the integration specs build and drop their
+own schema (`synchronize` + `dropSchema` in `src/database/test-data-source.ts`).
+`smart_inventory_e2e` is migration-managed like the real app (`synchronize: false`), so
+it needs `migration:run` once, and again after any new migration.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` (Phase 15, `docs/phase-15-plan.md`) runs on every push and
+every pull request against `develop`, plus a manual trigger. Three jobs, each on a
+clean `postgres:17` service container where it needs a database:
+
+- **`lint`** — `nest build` (the typecheck, blocking) plus `npm run lint` as a
+  non-blocking informational step (the script is `eslint --fix`, and the tree has
+  pre-existing lint errors — a real lint gate is a follow-up, `docs/phase-15-plan.md` §7).
+- **`test`** — creates `smart_inventory_test`, runs `npm test` (unit + integration).
+- **`e2e`** — creates `smart_inventory_e2e`, runs the **whole migration chain from
+  empty**, then `npm run test:e2e`. Nothing else exercises the migrations from scratch.
+
+It uses no secrets — every value is a throwaway dev default. **CI is not yet a required
+check**: a red run does not block a push (that's a repository setting, deferred until
+there's a second contributor — `docs/phase-15-plan.md` §7). Node version is pinned by
+`.nvmrc` (`24`) and `backend/package.json`'s `engines`, which `ci.yml` reads.
+See `docs/learning-notes/ci-and-environments.md`.
+
 ## Current phase
 
-Phase 13 — Frontend restructuring (`docs/phase-13-plan.md`): a **pure frontend
-restructuring, no behaviour change, no new dependency**. `frontend/index.html` was a
+Phase 15 — Continuous integration (`docs/phase-15-plan.md`): a CI pipeline
+(`.github/workflows/ci.yml`) that runs lint, the unit + integration suite, and the e2e
+suite against a clean `postgres:17` on every push and pull request. **No application
+code, no test, no migration changed** — it runs the suite that already existed. It also
+made explicit a set of things "the suite is green" had silently assumed: the two test
+databases (`smart_inventory_test`, `smart_inventory_e2e`) and their setup are now
+written down (see "Continuous integration" above and `tools/create-test-databases.mjs`),
+and the `e2e` job is the first thing that runs the whole migration chain against an
+empty database. A Node version is pinned (`.nvmrc` = `24`, `backend/package.json`
+`engines`) so local and CI agree. No new FR, BR, entity, route, or domain document
+change. See `docs/architecture-observations.md`'s Phase 15 section for the preconditions
+it named (including a pre-existing lint-cleanliness gap it surfaced) and what it
+deliberately left out (branch protection, a deploy pipeline).
+
+*(Phase 14 — catalogue paging — is written up in `docs/phase-14-plan.md` but not yet
+implemented; Phase 15 is independent of it and shipped first.)*
+
+Earlier phases: Phase 13 — Frontend restructuring (`docs/phase-13-plan.md`): a **pure
+frontend restructuring, no behaviour change, no new dependency**. `frontend/index.html` was a
 3,061-line single file — a 284-line `<style>` block and one `<script>` holding the
 config layer, the API client, the render helpers, the router, and sixteen views. It
 is now a ~14-line shell that links `styles.css` and loads

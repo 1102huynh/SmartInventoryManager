@@ -152,6 +152,18 @@ immediate transaction), not whether it is allowed.** BR-072 is amended in place 
 its date to say so, rather than left for a reader to reconcile two rules that disagree.
 This resolves `product.md` Q-6, open by name since Phase 5.
 
+## Continuous Integration (Phase 15 — no new FR)
+
+Phase 15 (`docs/phase-15-plan.md`) added a CI pipeline (`.github/workflows/ci.yml`)
+that runs lint, the unit + integration suite, and the e2e suite against a clean
+Postgres on every push and pull request. Like Phases 7, 8, 10, and 11, this adds no
+new FR — the fifth such note: a build-and-test pipeline is an engineering practice,
+not a capability in `product.md` §4, and no user opens a screen to interact with it.
+Unlike those four, it also touches **no application code, no migration, and no test** —
+it runs the suite that already exists. The only files that changed are `.github/`,
+`.nvmrc`, `backend/package.json`'s new `engines` field, `tools/create-test-databases.mjs`,
+and documentation.
+
 ## Cross-Reference Summary
 
 ```

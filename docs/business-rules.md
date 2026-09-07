@@ -299,6 +299,13 @@ the rows. `docs/phase-11-plan.md` §1 records why FR-030/FR-031's word "all" is 
 statement about the screen's subject, not a guarantee about one response, and
 `requirements.md`'s Phase 11 note carries that reading.
 
+**[2026-09-07, Phase 15]** No new BR — the fourth such line, after Phase 10's, Phase
+11's, and Phase 12's "no new `AuditEventType`" (below). `docs/phase-15-plan.md` adds a
+CI pipeline (`.github/workflows/ci.yml`): it runs the existing test suite on a clean
+environment on every push. It enforces nothing about the business — it enforces that
+the code enforcing the business still passes its own tests. No rule here is added,
+amended, or reinterpreted; no application code changes at all.
+
 ## Adjustment Approval
 
 - **BR-085** [Decided 2026-09-03, Phase 12] — **A Staff-initiated adjustment is a

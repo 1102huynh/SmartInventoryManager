@@ -1,0 +1,157 @@
+# Phase 15 (docs/phase-15-plan.md). This is a TEST workflow, not a deployment
+# pipeline: it proves the code still passes its own suite on a clean, from-scratch
+# environment. Every value below is a throwaway dev default (the same ones in
+# backend/.env.example) — there are deliberately no GitHub Actions secrets. A real
+# deploy job would need real secrets; this one does not (plan §1 Fork E).
+#
+# CI is not (yet) a required status check — a red run does not block a push. Turning
+# it into a merge gate is a repository setting, deferred until there is a second
+# contributor or a main/develop split (plan §1 Fork F, §7).
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches: [develop]
+  workflow_dispatch:
+
+jobs:
+  # ------------------------------------------------------------------ lint + typecheck
+  # No database. `nest build` is the real, blocking typecheck — it is clean on the
+  # committed tree.
+  #
+  # `npm run lint` is `eslint --fix`: it *mutates* files rather than checking them, and
+  # the committed tree has pre-existing eslint errors it cannot auto-fix (6 as of Phase
+  # 15 — unused vars and no-unsafe-call in three spec files) plus ~12 files that are not
+  # prettier-clean. Wiring CI is what surfaced this (docs/phase-15-plan.md §"why now").
+  # So the lint step runs for visibility but does NOT fail the build (continue-on-error);
+  # a proper lint gate — a --fix-free script plus clearing those errors — is a named
+  # follow-up (docs/phase-15-plan.md §7, docs/architecture-observations.md Phase 15).
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+        working-directory: backend
+      - name: eslint (informational — see job comment)
+        run: npm run lint
+        working-directory: backend
+        continue-on-error: true
+      - name: typecheck (nest build)
+        run: npm run build
+        working-directory: backend
+
+  # ------------------------------------------------------------------ unit + integration
+  # `npm test` runs both (jest's testRegex matches *.integration.spec.ts too). The
+  # integration specs build their own schema via createTestDataSource()'s
+  # synchronize + dropSchema — CI only has to make the database exist.
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      # The integration specs build their own DataSource against smart_inventory_test
+      # (TEST_DB_DATABASE default). DB_DATABASE is set to the same name so any spec that
+      # happens to boot the full AppModule connects to a database that exists here,
+      # rather than the dev `smart_inventory` this job never creates.
+      DB_DATABASE: smart_inventory_test
+      JWT_SECRET: ci-test-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+        working-directory: backend
+      - name: Create the integration test database
+        run: PGPASSWORD=postgres createdb -h localhost -U postgres smart_inventory_test
+      - run: npm test
+        working-directory: backend
+
+  # ------------------------------------------------------------------ end-to-end
+  # smart_inventory_e2e is migration-managed (the app runs synchronize: false; the
+  # specs TRUNCATE, they never CREATE). Running the whole migration chain against a
+  # freshly created database on every push is the highest-value check here — nothing
+  # else exercises the migrations from empty (plan §1 Fork D, §"why now").
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      # Each e2e spec also sets this in code before its imports; kept here too so the
+      # migration step below targets the same database without a per-step override.
+      DB_DATABASE: smart_inventory_e2e
+      JWT_SECRET: ci-test-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+        working-directory: backend
+      - name: Create the e2e database
+        run: PGPASSWORD=postgres createdb -h localhost -U postgres smart_inventory_e2e
+      - name: Run the migration chain from empty
+        run: npm run migration:run
+        working-directory: backend
+        env:
+          DB_DATABASE: smart_inventory_e2e
+      - run: npm run test:e2e
+        working-directory: backend
+
+  # ------------------------------------------------------------------ frontend
+  # Added when frontend/package.json exists (Phase 14, Fork G — docs/phase-14-plan.md
+  # §3). Until then there is nothing to run here. No database.
+  #
+  # frontend:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version-file: .nvmrc
+  #         cache: npm
+  #         cache-dependency-path: frontend/package-lock.json
+  #     - run: npm ci
+  #       working-directory: frontend
+  #     - run: npm test
+  #       working-directory: frontend

@@ -229,3 +229,10 @@ These affect the UI mockup and should be resolved before or during that phase.
   Should Have gains an item and its Future list is narrowed, and §10's **Q-6 is
   resolved**. Q-4 (sale concept) and Q-7 (multi-location) remain open, untouched since
   Phase 5.
+- **[Added 2026-09-07, Phase 15]** Continuous integration (`docs/phase-15-plan.md`,
+  `.github/workflows/ci.yml`, `requirements.md`'s Phase 15 note,
+  `docs/architecture-observations.md`'s Phase 15 section). Same shape as the Phase 7,
+  10, and 11 entries, not Phase 9's or Phase 12's: §4 gains no user goal, §5 gains no
+  use case, §7 gains no scope, and no application code changes at all — a test pipeline
+  is an engineering practice. It resolves none of §10's open questions — Q-4 (sale
+  concept) and Q-7 (multi-location) remain exactly as open as before.

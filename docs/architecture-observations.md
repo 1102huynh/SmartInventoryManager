@@ -411,3 +411,86 @@ smoke walk against a byte-identical pre-split baseline plus two mechanical invar
 (`docs/phase-13-plan.md` §7): the first phase that adds genuinely new frontend
 *logic* rather than relocating existing logic should add the harness to cover its own
 new behaviour.
+
+## Cross-cutting: continuous integration, and the preconditions it made explicit (Phase 15)
+
+Phase 15 (`docs/phase-15-plan.md`) added `.github/workflows/ci.yml` — lint, the
+unit + integration suite, and the e2e suite, each on a clean `postgres:17` service
+container, on every push and pull request. No application code, no test, no migration
+changed; the workflow runs the suite that already existed.
+
+**For twelve phases "the suite is green" was a fact about one machine.** Every plan
+since Phase 3 ends its "Definition of done" with a line of the shape *"full backend
+suite green — unit, integration, and all e2e specs,"* and that green was produced by
+one person running `pwsh tools/pg-start.ps1` and two `npm` commands by hand. The suite
+carried unstated preconditions — the portable Postgres running, `smart_inventory_test`
+and `smart_inventory_e2e` existing, `migration:run` already applied to the e2e
+database — none of which was written anywhere as a runnable step (`README.md` documented
+the *dev* database only). This is the same shape as this file's other entries: a
+correctness property (Phase 8's single-process throttle, Phase 10's `TIMESTAMP`
+write/read zone) that held at this project's scale and was never named as something
+that *could* stop holding. The workflow is the artefact that names these — a
+reviewer now reads `ci.yml` and sees exactly what "green" requires.
+
+**Wiring CI immediately surfaced that the lint step was never CI-clean.** `npm run
+lint` is `eslint --fix` — it rewrites files rather than checking them — and running it
+once during implementation reformatted about a dozen unrelated files (prettier
+line-wrapping only) and still reported six errors it cannot auto-fix (unused imports
+and `no-unsafe-call` in three spec files). Those errors predate Phase 15 by many
+phases; every "full suite green" in a DoD checklist meant the tests, never a clean
+lint, because `--fix` silently rewrites on each local run and the residual errors
+scroll past. Handled without widening the phase: the `lint` job gates on `nest build`
+(the clean typecheck) and runs eslint as a non-blocking informational step; a real
+lint gate — a `--fix`-free script plus fixing the six errors — is a follow-up
+(`docs/phase-15-plan.md` §7).
+
+**CI is the first thing that runs the migration chain against an empty database.**
+Phases 10 and 12 shipped migrations; a local `smart_inventory` / `smart_inventory_e2e`
+has had every migration applied incrementally, in order, over months. A migration that
+only works *against the schema the previous migration happened to leave* — a dropped
+`IF NOT EXISTS`, an implicit column order, a value that a prior data migration wrote —
+would never surface there. The `e2e` job does `createdb` then `npm run migration:run`
+from nothing on every push, so it would. If that step ever goes red, it has found a
+real defect in the migration chain, not a CI problem (`docs/phase-15-plan.md`
+§"why now", §5).
+
+**Two version pins, each a previously-ambient fact made explicit:**
+
+- **`postgres:17`**, not `postgres:latest`. The two version-sensitive spots are the
+  `timestamptz` conversion migration (Phase 10) and the `SELECT … FOR UPDATE`
+  concurrency test in `inventory.service.integration.spec.ts` — a green suite on a
+  different major would hide a regression in either. `tools/README.md` already pinned
+  "PostgreSQL 17.6" for local dev; CI now matches it.
+- **Node**, via a repo-root `.nvmrc` and a `backend/package.json` `engines` field —
+  neither existed before this phase, and CI picking its own version would have been one
+  more unstated precondition. The pin is **`24`** (`>=24 <25`), which is the version the
+  project's developer already runs locally, **not** the active LTS (22) that
+  `docs/phase-15-plan.md` §1 Fork G recommends. That is a deliberate owner choice,
+  recorded here per the fork: keeping local and CI identical was judged to matter more
+  than tracking LTS, and the pin is a one-line change if that trade is revisited.
+
+**What this phase deliberately did not do**, so a reviewer does not read the absence as
+an oversight:
+
+- **No branch protection / required status check.** That is a GitHub *repository
+  setting*, not a file in the repo, and with one contributor pushing straight to
+  `develop` it would only block the author. Deferred until a second contributor or a
+  `main`/`develop` split; it is one click then (`docs/phase-15-plan.md` §1 Fork F, §7).
+- **No deploy pipeline.** This workflow is CI, not CD. It runs entirely on throwaway
+  values — the same dev defaults as `backend/.env.example`, no GitHub Actions secret
+  anywhere. A deploy job would need real secrets and an environment target; that is a
+  separate decision gated on this app being hosted somewhere real (§7).
+- **No Node version matrix.** One application, one deploy target — a matrix is for a
+  library that publishes to many runtimes (Fork G).
+- **No coverage gate**, no build/dependency caching beyond `setup-node`'s npm cache, no
+  jest sharding. The suite is minutes; optimise when it hurts (§7).
+
+**The learning-notes gap this phase names but does not close.** `docs/learning-notes/`
+was last brought current at Phase 8 (`git log` on that directory —
+`9649e0e`). Phases 9–14 added substantial material — the audit log's best-effort write,
+Phase 10's `timestamptz` write/read-zone mechanics, Phase 11's bounded-read convention,
+Phase 12's first row-relationship authorization rule, Phase 13's frontend module
+architecture — with no note. Phase 15 adds **one** new note for its own subject
+(`ci-and-environments.md`) and explicitly does not retro-document six phases as a rider;
+`docs/phase-15-plan.md` §7 names that as its own focused piece of work. Recorded here
+so the gap is on the record and not mistaken for something this phase covered.

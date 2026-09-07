@@ -120,12 +120,12 @@ See `docs/learning-notes/testing-strategy.md` for what each of these actually pr
 for e2e) are separate from the dev `smart_inventory`, and the local setup for them was
 previously unwritten. CI (below) creates them from scratch on every run; locally you do
 it once. The portable Postgres in `tools/` is a stripped build with no `createdb`, so
-use the helper script (run from `backend/`, where its one dependency already lives):
+use the helper script (it resolves its one dependency, `pg`, from `backend/`,
+and runs from any directory):
 
 ```
-cd backend
-node ../tools/create-test-databases.mjs
-DB_DATABASE=smart_inventory_e2e npm run migration:run
+node tools/create-test-databases.mjs
+cd backend && DB_DATABASE=smart_inventory_e2e npm run migration:run
 ```
 
 `smart_inventory_test` needs no migration — the integration specs build and drop their

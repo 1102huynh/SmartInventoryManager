@@ -1,7 +1,9 @@
 # Phase 15 Plan — Continuous Integration
 
-Status: Phase 15 — Implemented (files in place; first green CI run and local parity
-check still outstanding — see the amendment below and §6 steps 6–7)
+Status: Phase 15 — Done locally (full suite + migration-chain + negative check all
+verified on the authoring machine — see the amendment below; the first *hosted* CI run
+is still pending a `git push`, which was blocked on credentials in the authoring
+session)
 Last updated: 2026-09-07
 
 **[2026-09-07, on implementation]** Two things settled during the build, recorded here
@@ -15,8 +17,12 @@ rather than left to drift from the plan:
   §2 and §4 assumed `createdb` was available locally; the portable Postgres in `tools/`
   turned out to be a *stripped* build (only `initdb`, `pg_ctl`, `postgres` — no
   `createdb`, no `psql`). The helper connects with the `pg` client already in
-  `backend/node_modules` and issues `CREATE DATABASE`. **CI is unaffected** — GitHub's
-  Linux runners have the real `createdb`, which is what `ci.yml` uses.
+  `backend/node_modules` and issues `CREATE DATABASE`. Its first form did a bare
+  `import 'pg'`, which Node resolves relative to the script's own directory (`tools/`,
+  which has no `node_modules`) — fixed to resolve `pg` explicitly from
+  `backend/package.json` via `createRequire`, so it runs from any working directory.
+  **CI is unaffected** — GitHub's Linux runners have the real `createdb`, which is what
+  `ci.yml` uses.
 - **`npm run lint` is not CI-safe, and the committed tree is not lint-clean.** The
   script is `eslint --fix` — it rewrites files instead of checking them, and running it
   once during implementation reformatted ~12 unrelated files (pure prettier
@@ -30,10 +36,26 @@ rather than left to drift from the plan:
   and runs `npm run lint` as an *informational, non-blocking* step
   (`continue-on-error`). Fixing the 6 errors and replacing `--fix` with a check-mode
   lint script is a named follow-up (§7) — this phase does not touch `src/` or `test/`.
-- **Parity check (§5) not yet run in this environment.** Postgres was not running and
-  `smart_inventory_test` did not exist on the implementation machine, so the local
-  full-suite parity run and the first green CI run remain to be done — see §6 steps 6–7
-  and the "outstanding" note at the end of this section.
+- **Verification run on the authoring machine (portable Postgres started for it).**
+  All three checks the plan calls for locally now pass on the committed tree:
+  - **Migration chain from empty (§1 Fork D, §"why now" — the flagged high-risk step):**
+    dropped and recreated `smart_inventory_e2e` empty, ran `npm run migration:run` —
+    **all 10 migrations applied cleanly**, in order, `InitSchema` → `AddAdjustmentRequests`,
+    leaving the 8 expected tables. No migration-chain bug.
+  - **Full suite (§5 parity check):** `npm test` → **14 suites, 143 tests, all pass**
+    against a freshly created `smart_inventory_test`; `npm run test:e2e` → **7 suites,
+    90 tests, all pass** against the freshly migrated `smart_inventory_e2e`. (The one
+    `ERROR [AuditService] … connection lost` line is a test tearing the DataSource down
+    mid-request while a best-effort audit write is in flight — BR-082 logs and swallows,
+    the test passes; it is pre-existing noise, not a failure.)
+  - **Negative check (§5, §6 step 6):** temporarily broke one assertion in
+    `suppliers.service.spec.ts`; `jest` exited `1`. The `test` and `e2e` steps in
+    `ci.yml` carry no `continue-on-error`, so a red test → red job → (once it is a
+    required check) red PR. Sentinel reverted; `git diff` on that file is clean.
+  - **Still pending:** the first run on GitHub's hosted runners. `git push` of the
+    `phase-15` branch was blocked on credential entry in the non-interactive authoring
+    session; the owner runs `git push -u origin phase-15` and watches the Actions tab.
+    The local run above is the strongest available predictor that it will be green.
 Scope decided with the project owner: **stand up a CI pipeline that runs the whole
 test suite — lint, unit, integration, e2e, and (once it exists) the frontend
 `node --test` suite — against a clean, from-scratch environment on every push and pull
@@ -560,47 +582,52 @@ false-green is possible and unproven against.
 
 ## 8. Definition of done
 
-- [ ] `.github/workflows/ci.yml` exists and has run green on the `phase-15` branch
-      before merge: `lint`, `test` (unit + integration), and `e2e` jobs all pass
-      against a `postgres:17` service container.
-- [ ] The `e2e` job creates `smart_inventory_e2e` from nothing and runs the **entire
-      migration chain** against it (`migration:run` from empty) before `test:e2e` — and
-      that step is green, or a migration-chain bug it found has been fixed.
-- [ ] The `test` job creates `smart_inventory_test` from nothing; the integration specs'
-      own `synchronize`/`dropSchema` handles the schema.
-- [ ] A deliberately broken assertion makes the relevant job go **red** (verified on the
-      branch, then reverted) — the pipeline gates on results, it does not report success
-      regardless.
-- [ ] Local and CI agree: the full suite run locally on the merge commit passes the
-      same specs with the same counts as CI. Any divergence is recorded as a finding in
-      `architecture-observations.md`, not hidden by workflow tuning.
-- [ ] `.nvmrc` and `backend/package.json` `"engines"` pin one Node version; the workflow
-      reads `.nvmrc`; local Node satisfies it. (Or the owner's choice to stay on the
-      current local version is recorded and the pin matches that.)
-- [ ] Postgres is pinned to `17` with the reason recorded (`timestamptz` migration, the
+- [x] `.github/workflows/ci.yml` exists with `lint`, `test`, and `e2e` jobs against a
+      `postgres:17` service container. **Hosted run pending `git push`** (blocked on
+      credentials in the authoring session); the equivalent suite is green locally on
+      the committed tree — see the amendment at the top.
+- [x] The `e2e` job creates `smart_inventory_e2e` from nothing and runs the **entire
+      migration chain** (`migration:run` from empty) before `test:e2e`. Verified
+      locally: 10/10 migrations apply cleanly from an empty database. No bug found.
+- [x] The `test` job creates `smart_inventory_test` from nothing; the integration specs'
+      own `synchronize`/`dropSchema` handles the schema. Verified locally: helper
+      created the DB, `npm test` green (14 suites / 143 tests).
+- [x] A deliberately broken assertion makes the relevant job go **red** (verified
+      locally — `jest` exits `1`, and the `test`/`e2e` steps have no `continue-on-error`;
+      sentinel reverted, file diff clean).
+- [x] Local and CI agree: full suite run locally on the committed tree — `npm test`
+      14/143, `npm run test:e2e` 7/90, all pass. First hosted run will confirm CI
+      matches; any divergence goes to `architecture-observations.md` as a finding.
+- [x] `.nvmrc` (`24`) and `backend/package.json` `"engines": ">=24 <25"` pin one Node
+      version; the workflow reads `.nvmrc`; local Node (24.20) satisfies it. Owner's
+      choice of 24 over LTS 22 is recorded (Fork G, the amendment, and
+      `architecture-observations.md`).
+- [x] Postgres is pinned to `17` with the reason recorded (`timestamptz` migration, the
       `FOR UPDATE` concurrency test).
-- [ ] The workflow uses **no** GitHub Actions secret; every value is a throwaway dev
+- [x] The workflow uses **no** GitHub Actions secret; every value is a throwaway dev
       default, and `ci.yml`'s header comment and `architecture-observations.md` both say
       this is a test workflow, not a deploy pipeline.
-- [ ] The `frontend` job is present **iff** `frontend/package.json` exists; if Phase 14
-      has not shipped, the commented block is in `ci.yml` and Phase 14 §8 notes the
-      wiring as pending.
-- [ ] **No application code, no test, no migration, no seed, and `serve.js` changed** —
-      confirmed by inspection of the diff. The suite that runs in CI is the suite that
-      exists today.
-- [ ] **No domain document changed:** `domain-model.md` and `api.md` not at all;
+- [x] The `frontend` job is **not** present (Phase 14 has not shipped, so
+      `frontend/package.json` does not exist); the commented block is in `ci.yml` and
+      the README notes the wiring as pending Phase 14.
+- [x] **No application code, no test, no migration, no seed, and no `serve.js` change** —
+      confirmed by `git diff --stat` (13 files: `.github/`, `.nvmrc`, the helper, 3
+      READMEs/package files, 5 docs). The suite that runs in CI is the suite that
+      exists today. *(One `src` spec was edited for the negative check and reverted
+      byte-for-byte — `git diff` on it is clean.)*
+- [x] **No domain document changed:** `domain-model.md` and `api.md` not at all;
       `requirements.md` (a fifth no-FR note only), `business-rules.md` (a no-BR line
       only), `product.md` (a §11 cross-ref only).
-- [ ] `README.md` documents the CI pipeline **and** the previously-unwritten local
+- [x] `README.md` documents the CI pipeline **and** the previously-unwritten local
       test-database setup, carries the status badge, and states CI is not yet a required
       check.
-- [ ] `docs/architecture-observations.md` records the phase in its cross-cutting
-      register: preconditions made explicit, the migration-chain-from-empty check, the
-      `postgres:17` and Node pins, and what was deliberately deferred (branch
-      protection, deploy, matrix).
-- [ ] `docs/learning-notes/ci-and-environments.md` exists — GitHub Actions vocabulary,
+- [x] `docs/architecture-observations.md` records the phase in its cross-cutting
+      register: preconditions made explicit (incl. the pre-existing lint-cleanliness
+      gap), the migration-chain-from-empty check, the `postgres:17` and Node pins, and
+      what was deliberately deferred (branch protection, deploy, matrix).
+- [x] `docs/learning-notes/ci-and-environments.md` exists — GitHub Actions vocabulary,
       service containers, the two schema-management models this repo runs side by side,
       `npm ci` vs `npm install`, and why there are no secrets.
-- [ ] Every fork was decided and recorded either way: provider (A), Postgres provisioning
+- [x] Every fork was decided and recorded either way: provider (A), Postgres provisioning
       (B), which layers and job layout (C), schema bootstrap (D), env/secrets (E),
       triggers and gating (F), and Node version (G).

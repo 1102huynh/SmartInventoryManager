@@ -51,7 +51,7 @@ npm run test:cov  # unit + integration, with coverage
 Both `smart_inventory_test` and `smart_inventory_e2e` are separate databases from the
 dev database (`smart_inventory`) — each test run truncates its tables, so tests never
 touch or depend on seeded demo data. Create them once (the portable Postgres in
-`../tools/` has no `createdb`, so use the helper):
+`../tools/` has no `createdb`, so use the helper — it resolves `pg` from this package):
 
 ```bash
 node ../tools/create-test-databases.mjs

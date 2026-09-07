@@ -91,7 +91,9 @@ describe('Audit log (e2e)', () => {
     // table again so each test starts from a genuinely empty log, the way a fresh
     // `npm run seed` database would (docs/phase-9-plan.md §2 "the audit log is
     // legitimately empty afterward").
-    await dataSource.query('TRUNCATE TABLE audit_events RESTART IDENTITY CASCADE');
+    await dataSource.query(
+      'TRUNCATE TABLE audit_events RESTART IDENTITY CASCADE',
+    );
   });
 
   function asOwner(req: request.Test): request.Test {
@@ -184,7 +186,9 @@ describe('Audit log (e2e)', () => {
       request(app.getHttpServer()).post('/products'),
     ).send({ name: 'Widget', sku: 'W-1', unit: 'each' });
     const productId = product.body.id;
-    await dataSource.query('TRUNCATE TABLE audit_events RESTART IDENTITY CASCADE');
+    await dataSource.query(
+      'TRUNCATE TABLE audit_events RESTART IDENTITY CASCADE',
+    );
 
     const del = await asOwner(
       request(app.getHttpServer()).delete(`/products/${productId}`),
@@ -199,7 +203,9 @@ describe('Audit log (e2e)', () => {
 
     // ...but the audit row naming it survives, with no FK to have blocked either.
     const log = await asOwner(
-      request(app.getHttpServer()).get('/audit-events?eventType=product_deleted'),
+      request(app.getHttpServer()).get(
+        '/audit-events?eventType=product_deleted',
+      ),
     );
     expect(log.status).toBe(200);
     expect(log.body).toHaveLength(1);
@@ -222,7 +228,9 @@ describe('Audit log (e2e)', () => {
 
     // The product-creation event itself is administrative, not a stock event — clear
     // the log so this test only has to reason about stock-in/out afterward.
-    await dataSource.query('TRUNCATE TABLE audit_events RESTART IDENTITY CASCADE');
+    await dataSource.query(
+      'TRUNCATE TABLE audit_events RESTART IDENTITY CASCADE',
+    );
 
     const stockIn = await asOwner(
       request(app.getHttpServer()).post(`/products/${productId}/stock-in`),
@@ -234,17 +242,23 @@ describe('Audit log (e2e)', () => {
     ).send({ quantity: 3, occurredAt: '2026-08-02' });
     expect(stockOut.status).toBe(201);
 
-    const log = await asOwner(request(app.getHttpServer()).get('/audit-events'));
+    const log = await asOwner(
+      request(app.getHttpServer()).get('/audit-events'),
+    );
     expect(log.status).toBe(200);
     expect(log.body).toEqual([]);
   });
 
   // -------------------------------------------------------------- serialization safety --
   it('the joined actor/subject on an audit event carry no passwordHash, failedLoginAttempts, or lockedUntil', async () => {
-    await asOwner(request(app.getHttpServer()).patch(`/users/${staffId}`)).send({
-      name: 'Renamed',
-    });
-    const res = await asOwner(request(app.getHttpServer()).get('/audit-events'));
+    await asOwner(request(app.getHttpServer()).patch(`/users/${staffId}`)).send(
+      {
+        name: 'Renamed',
+      },
+    );
+    const res = await asOwner(
+      request(app.getHttpServer()).get('/audit-events'),
+    );
     expect(res.status).toBe(200);
     expect(JSON.stringify(res.body)).not.toMatch(/passwordHash/);
     expect(JSON.stringify(res.body)).not.toMatch(/failedLoginAttempts/);

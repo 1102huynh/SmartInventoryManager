@@ -243,7 +243,10 @@ export class UsersService {
   // can only be reached on the exact call that crosses the threshold. `ip` is scope
   // fork A, threaded down from AuthService so the lock event carries the same address
   // evidence as the login_failed rows around it.
-  async registerFailedLogin(user: User, ip: string | null = null): Promise<void> {
+  async registerFailedLogin(
+    user: User,
+    ip: string | null = null,
+  ): Promise<void> {
     if (this.isLocked(user)) return;
     if (user.lockedUntil) {
       user.failedLoginAttempts = 0;

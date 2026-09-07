@@ -68,7 +68,10 @@ export class SuppliersService {
     if (dto.name !== undefined && dto.name !== supplier.name) {
       changes.push(`Name changed to ${dto.name}`);
     }
-    if (dto.contactName !== undefined && dto.contactName !== supplier.contactName) {
+    if (
+      dto.contactName !== undefined &&
+      dto.contactName !== supplier.contactName
+    ) {
       changes.push('Contact name changed');
     }
     if (dto.email !== undefined && dto.email !== supplier.email) {
@@ -111,8 +114,7 @@ export class SuppliersService {
       actorUserId: actorId,
       entityType: AuditEntityType.SUPPLIER,
       entityId: id,
-      summary:
-        status === EntityStatus.ACTIVE ? 'Reactivated' : 'Deactivated',
+      summary: status === EntityStatus.ACTIVE ? 'Reactivated' : 'Deactivated',
     });
     return saved;
   }

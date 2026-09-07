@@ -165,9 +165,7 @@ describe('Timestamps (integration)', () => {
 
   it('a DEFAULT now()-written row round-trips to the instant it was actually written at', async () => {
     const before = Date.now();
-    await dataSource.query(
-      `INSERT INTO categories (name) VALUES ('raw-cat')`,
-    );
+    await dataSource.query(`INSERT INTO categories (name) VALUES ('raw-cat')`);
     const after = Date.now();
     const [rawRow] = await dataSource.query(
       `SELECT created_at FROM categories WHERE name = 'raw-cat'`,
@@ -220,7 +218,9 @@ describe('Timestamps (integration)', () => {
 
     const remainingMs = reloaded!.lockedUntil!.getTime() - Date.now();
     const fifteenMinutesMs = 15 * 60_000;
-    expect(remainingMs).toBeGreaterThan(fifteenMinutesMs - TOLERANCE_MS - 3_000);
+    expect(remainingMs).toBeGreaterThan(
+      fifteenMinutesMs - TOLERANCE_MS - 3_000,
+    );
     expect(remainingMs).toBeLessThanOrEqual(fifteenMinutesMs);
   });
 });

@@ -7,7 +7,10 @@ import { RolesGuard } from './roles.guard';
 // uses for ArgumentsHost: build only what RolesGuard.canActivate actually calls,
 // rather than spinning up a real Nest request pipeline.
 describe('RolesGuard', () => {
-  function makeContext(user?: { id: number; role: UserRole }): ExecutionContext {
+  function makeContext(user?: {
+    id: number;
+    role: UserRole;
+  }): ExecutionContext {
     return {
       getHandler: () => ({}),
       getClass: () => ({}),

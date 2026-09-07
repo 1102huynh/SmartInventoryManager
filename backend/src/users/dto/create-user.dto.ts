@@ -1,4 +1,10 @@
-import { IsEmail, IsEnum, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsEnum,
+  IsNotEmpty,
+  IsString,
+  MinLength,
+} from 'class-validator';
 import { UserRole } from '../../common/enums/user-role.enum';
 
 // FR-063 (docs/phase-6-plan.md §1 "Passwords: the Owner sets them"): the Owner types

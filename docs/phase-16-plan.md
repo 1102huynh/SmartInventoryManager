@@ -252,9 +252,8 @@ phase's concern.
    added to the test override on the rationale its four siblings already use; a
    `.gitattributes` so a lint run is byte-deterministic across a Windows dev box and a
    Linux runner). And: **branch protection is now genuinely one click** — the only
-   real blocker (a permanently-red lint check) is gone — but it stays unflipped because
-   Phase 15 Fork F's trigger (a second contributor) still has not fired; §7 carries the
-   exact settings for the day it does.
+   real blocker (a permanently-red lint check) is gone. *(Flipped shortly after, by
+   issue #6 — see §7; this line is the Phase 16 record.)*
 3. **`README.md`** — the "Continuous integration" section: `lint` is now a blocking
    check (drop the "non-blocking informational" caveat); the badge should now be
    fully green. Add `.gitattributes` / line-ending normalisation as a one-liner under
@@ -339,14 +338,15 @@ cannot tell whether lint is meant to be trusted yet.
 
 ## 7. Explicitly out of scope for Phase 16 (Future)
 
-- **Branch protection / required status checks on `develop`.** This phase removes the
-  only real blocker (a lint check that could never pass), so this is now a one-click
-  repository setting: *Settings → Branches → add rule for `develop` → require status
-  checks to pass → select `lint`, `test`, `e2e` → require a pull request before merging
-  → 0 required approvals* (so the solo author still self-merges, but nothing merges
-  red). **Trigger, unchanged from Phase 15 Fork F:** a second contributor, or a
-  `main`/`develop` split. Flip it then; the settings are written down here so it stays
-  a decision, not a task.
+- **Branch protection / required status checks on `develop`.** ✅ **Done — issue #6**
+  (ahead of Phase 15 Fork F's stated trigger; once the checks are trustworthy the cost
+  of flipping early is nil). This phase removed the only real blocker (a lint check that
+  could never pass). Applied settings, via the branch-protection API (`Settings →
+  Branches` shows the same): require status checks `lint`, `test`, `e2e` (not strict /
+  "up to date"); require a pull request, **0 required approvals** (so the solo author
+  still self-merges, but nothing merges red); `enforce_admins` off (author can push
+  directly in a pinch); `frontend` deliberately **not** required; force-pushes and
+  branch deletion disabled.
 - **Pre-commit hooks (husky / lint-staged)** — Fork G. **Trigger:** lint/prettier
   drift recurs despite the blocking CI check.
 - **Promoting `no-floating-promises` and `no-unsafe-argument` from `warn` to `error`**

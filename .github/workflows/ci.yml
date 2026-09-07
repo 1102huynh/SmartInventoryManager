@@ -4,9 +4,10 @@
 # backend/.env.example) — there are deliberately no GitHub Actions secrets. A real
 # deploy job would need real secrets; this one does not (plan §1 Fork E).
 #
-# CI is not (yet) a required status check — a red run does not block a push. Turning
-# it into a merge gate is a repository setting, deferred until there is a second
-# contributor or a main/develop split (plan §1 Fork F, §7).
+# `lint`, `test` and `e2e` are required status checks on `develop` — a red run blocks
+# the merge (branch protection, issue #6; `frontend` is intentionally not required).
+# `develop` also requires a pull request (0 approvals — the solo author self-merges).
+# Set via the repo API, not a file here; the exact settings are in docs/phase-16-plan.md §7.
 name: CI
 
 on:

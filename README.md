@@ -164,9 +164,11 @@ the last), each on a clean `postgres:17` service container where it needs a data
 Line endings are normalised to LF by `.gitattributes` (Phase 16) so a lint run means
 the same bytes on Windows and on the Linux runner.
 
-It uses no secrets — every value is a throwaway dev default. **CI is not yet a required
-check**: a red run does not block a push (that's a repository setting, deferred until
-there's a second contributor — `docs/phase-15-plan.md` §7). Node version is pinned by
+It uses no secrets — every value is a throwaway dev default. **`lint`, `test` and `e2e`
+are required checks on `develop`, and `develop` requires a pull request** (0 approvals —
+the solo author self-merges, but nothing merges red). That's branch protection, a
+repository setting rather than a file here (issue #6); `frontend` runs but is not
+required, and admins are not forced through the gate. Node version is pinned by
 `.nvmrc` (`24`) and `backend/package.json`'s `engines`, which `ci.yml` reads.
 See `docs/learning-notes/ci-and-environments.md`.
 
@@ -195,7 +197,8 @@ empty database. A Node version is pinned (`.nvmrc` = `24`, `backend/package.json
 `engines`) so local and CI agree. No new FR, BR, entity, route, or domain document
 change. See `docs/architecture-observations.md`'s Phase 15 section for the preconditions
 it named (including a pre-existing lint-cleanliness gap it surfaced) and what it
-deliberately left out (branch protection, a deploy pipeline).
+deliberately left out (a deploy pipeline; branch protection came later in issue #6,
+now that `lint`/`test`/`e2e` are required checks on `develop`).
 
 Earlier phases: Phase 14 — Catalogue paging (`docs/phase-14-plan.md`): the four catalogue list screens
 (`/products`, `/suppliers`, `/categories`, `/users`) get a real paging design — a page,

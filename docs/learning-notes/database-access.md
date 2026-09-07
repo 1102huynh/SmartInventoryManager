@@ -316,6 +316,83 @@ one operation, not two.** A sort that was good enough to *display* a full result
 becomes a correctness bug the moment something downstream cuts it off — the cut is only
 well-defined if the sort is total.
 
+## `findAndCount`, a computed column in the query, and offset paging (Phase 14)
+
+Phase 14 (`docs/phase-14-plan.md`) gave the four catalogue list reads an optional
+`?page=&pageSize=` and a `{ items, page, pageSize, total }` envelope. Three mechanics.
+
+**`findAndCount` / `getManyAndCount` — one call, two queries, and why the `COUNT(*)` is
+fine here.** `repository.findAndCount({ where, order, skip, take })` returns
+`[rows, total]`; the query builder's `getManyAndCount()` is the same. Under the hood it
+is the page query **plus** a `SELECT COUNT(*)` over the same `where` (no `order`, no
+`skip`/`take`). That second scan is the exact thing Phase 11 §1 *refused* for the log
+reads — but there the filtered set was the whole transaction history, growing forever.
+A catalogue's filtered set is a few hundred rows that a person adds a few times a week,
+so the count is cheap and buys what the screen actually needs: a real `total` for
+"Page 3 of 12 · 573 products" and the ability to jump to the last page. The
+symmetry to carry: **a `COUNT(*)` is priced by the size of the set it scans, not by
+principle** — refused on a log, unremarkable on a catalogue.
+
+**A computed column via a subquery join, read back off `getRawAndEntities()`.**
+`ProductsService.findAll` needs each product's current stock — a
+`SUM(quantity_delta)` from `inventory_transactions` — as part of the row, so that
+`?status=low` can be a `WHERE` clause rather than a post-fetch `.filter()`. The shape:
+
+```ts
+const qb = repo
+  .createQueryBuilder('product')
+  .leftJoin(
+    (sub) => sub
+      .select('tx.product_id', 'product_id')
+      .addSelect('SUM(tx.quantity_delta)', 'stock')
+      .from(InventoryTransaction, 'tx')
+      .groupBy('tx.product_id'),
+    'stock_agg',
+    'stock_agg.product_id = product.id',
+  )
+  .addSelect('COALESCE(stock_agg.stock, 0)', 'currentStock')
+  .addSelect('stock_agg.product_id IS NOT NULL', 'hasHistory')
+  .orderBy('product.name', 'ASC');
+// low/out are now real conditions over the aggregate:
+if (low) qb.andWhere('product.low_stock_threshold IS NOT NULL AND COALESCE(stock_agg.stock,0) <= product.low_stock_threshold');
+
+const { entities, raw } = await qb.getRawAndEntities<{ currentStock: string; hasHistory: boolean }>();
+```
+
+Points that bite if you don't know them:
+
+- `getMany()` **drops** any `addSelect` that isn't a mapped entity column — the custom
+  values are simply not there. `getRawAndEntities()` returns both: `entities[i]` is the
+  hydrated `Product`, `raw[i]` is the raw row, **index-aligned**. Merge them yourself
+  (`{ ...entities[i], currentStock: Number(raw[i].currentStock) }`).
+- Custom `addSelect(expr, 'alias')` aliases come back on `raw` **verbatim** —
+  `raw[i].currentStock`, `raw[i].hasHistory` — *not* prefixed the way entity columns
+  are (`raw[i].product_id`).
+- `SUM` over an `int` column returns Postgres `bigint`, which the `pg` driver hands
+  back as a **string** (`"20"`), so `Number(...)` / `parseInt(...)` it. `... IS NOT
+  NULL` comes back as a real JS boolean.
+- The grouped subquery join produces at most one row per product (no fan-out), so
+  `.limit()`/`.offset()` are safe here — you do **not** need `take()`/`skip()`'s
+  two-query form (contrast the Phase 11 note above, where joined `@ManyToOne` relations
+  still made `take()` the defensive choice). Count first (`getCount()` — it drops the
+  custom `SELECT`, `ORDER BY`, and limit/offset, keeps the joins and `WHERE`), *then*
+  apply `.offset(skip).limit(take)` and fetch the page.
+
+**Offset paging is correct for a catalogue and a skipped-row bug for a log — same
+reason the Phase 11 note gives for `id` tie-breaks.** `OFFSET (page-1)*size` tells the
+database "skip this many rows *in the current sort*." That is only well-defined if the
+sort is total **and stable between requests**. A catalogue ordered `name ASC` (or `id
+ASC` for users) is both: the sort key doesn't move, and rows are inserted by a person a
+few times a week, so the window where someone adds "Mango" while another user clicks
+from page 3 to page 4 (skipping or repeating a row at the boundary) is a race measured
+in human seconds on a table that barely changes — tolerable. A transaction/audit log is
+the opposite table: new rows land at the *top* of the `occurred_at DESC` order
+constantly, so an offset page turned a second later is over a list that has shifted
+under it — the classic offset skipped-row bug, live. That is why Phase 11 §7 refused
+`?offset=` for the logs and kept "recent N + filters + `X-Result-Truncated`", and why
+Phase 14 uses offset for catalogues without contradiction. **Offset pagination's
+correctness is a property of the table's write pattern, not of offset itself.**
+
 ## Common Mistakes
 
 - Giving a nullable TypeScript field (`string | null`) a `@Column()` with no explicit

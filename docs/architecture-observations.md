@@ -276,6 +276,10 @@ was scoped from, taken from the repository rather than from memory:
 | `GET /categories` | `CategoriesService.findAll` | none | `name ASC` | an Owner deciding to add a category |
 | `GET /users` | `UsersService.findAll` | none | `id ASC` | an Owner deciding to add an account |
 
+*(Phase 14 update: the four catalogue rows gained an **optional** `?page=&pageSize=`
+and a paged envelope; the default — no param — is still the full array. See the
+Phase 14 section below for why the precondition is only **partly** retired.)*
+
 **Phase 9 gave a reason for capping `/audit-events` that was true but narrower than
 necessary** — *"this table grows without any user doing anything, from every failed
 login anywhere on the internet."* The stronger form, which was already true on the day
@@ -304,7 +308,10 @@ by name and only then filter.
 That this file now holds **three** preconditions of one shape — correct at this
 project's scale, silently invalidated by growth or by a second process, never checked
 — is itself the observation: it is the pattern this codebase reaches for, not three
-coincidences.
+coincidences. *(Phase 14 retires the tractable part of the catalogue-reads one — every
+list **screen** is now paged and the routes accept a page — but the three routes with
+a whole-set second consumer still return the full set by default, so it drops to
+**two-and-a-half**, not two.)*
 
 ## Cross-cutting: the module seam's first real test, and a convention reused by reference (Phase 12)
 
@@ -494,3 +501,83 @@ architecture — with no note. Phase 15 adds **one** new note for its own subjec
 (`ci-and-environments.md`) and explicitly does not retro-document six phases as a rider;
 `docs/phase-15-plan.md` §7 names that as its own focused piece of work. Recorded here
 so the gap is on the record and not mistaken for something this phase covered.
+
+## Cross-cutting: catalogue paging, and a precondition partly retired (Phase 14)
+
+Phase 14 (`docs/phase-14-plan.md`) gave the four catalogue list reads
+(`/products`, `/suppliers`, `/categories`, `/users`) an **optional** `?page=&pageSize=`
+and a `{ items, page, pageSize, total }` envelope, gave every list *screen* a
+Prev/Next control, moved the Product List's `low`/`out` filter into SQL, and added the
+frontend's first automated test. It landed after Phase 15 in wall-clock — CI was built
+first — but is numbered before it. **No migration.**
+
+**The unbounded-catalogue-reads precondition (this file's third, named in the Phase 11
+section) is only *partly* retired — deliberately, and the reason is a repository fact
+the tidy version of this phase does not survive.** Three of the four routes have a
+*second consumer that needs every row*: `GET /products` feeds the stock/adjustment
+wizard's product picker and the category screen's product-count read; `GET /suppliers`
+feeds the stock-in wizard's supplier picker; `GET /categories` feeds
+`Store.loadReferenceData`, the global `CATEGORIES` cache every product form's dropdown
+reads. A picker silently capped at 50 is a **correctness cliff** — a user cannot record
+a movement against product #51 — not a slow screen. So the routes stay unbounded *by
+default* (the bare array), and paging is something a caller opts into; only the list
+screens do. What is genuinely retired: every list screen is now bounded, the routes
+*can* be bounded by any caller that wants a page, and `GET /users` — the one with no
+second consumer — could be made non-optionally paged (Fork D) if a reviewer prefers.
+**Two-and-a-half of the original three preconditions, not two.** The trigger that would
+close the rest is named in `docs/phase-14-plan.md` §7: making the pickers
+typeahead/search-as-you-type controls that query a paged, searchable route — a UX
+change to two wizards and a screen, with its own justification, not a rider here.
+
+**Offset pagination, not keyset — and the Phase 11 reason against `?offset=` does not
+transfer.** Phase 11 §7 refused `?offset=` for the log reads because *"a table where
+new rows arrive at the top"* ships the classic skipped-row bug the instant an offset
+page is turned while a row is inserted above it. A catalogue is the opposite table: it
+is ordered `name ASC` (a stable key that does not move), rows are added one at a time
+by a person choosing to add one, and it grows a few times a week. The skipped/
+duplicated-row window still exists in principle but needs someone to insert a product
+named "Mango" in the seconds another user takes to click Next — a tolerable window
+where the log feed's was not. Offset also buys the two things a catalogue UI wants and
+keyset cannot give cheaply: a real `total` ("Page 3 of 12 · 573 products") and
+random access to the last page. `getManyAndCount` / `findAndCount` (and, for the
+products query, `getCount` + `getRawAndEntities`) issue one extra `COUNT(*)` over the
+filtered set — a few-hundred-row scan here, the exact scan Phase 11 §1 refused for the
+logs *because there the filtered set was the whole transaction history*.
+
+**The envelope/header asymmetry is deliberate, not an inconsistency to iron out.** Log
+reads return "recent N + filters + `X-Result-Truncated`" — a *reading position*;
+catalogue reads return "page N of a total" — a *page of a whole*. Phase 11 §1's "a cap
+on a log is a reading position; a cap on a catalogue is a wrong answer" is now made
+concrete in two response shapes. The envelope is catalogue-only and appears **only**
+when a paging param is sent; every other caller — the pickers, the reference cache —
+gets the byte-for-byte-unchanged bare array, which is what let this phase ship without
+touching three wizards.
+
+**Fork B moved "the most load-bearing query in the app" and shipped no migration.**
+`ProductsService.findAll` used to run its SQL, then filter `status=low`/`out` in
+application code (current stock is a `SUM(quantity_delta)` the `WHERE` clause could not
+see) and fire two more round-trips for the stock and history maps. It now computes
+current stock and `hasHistory` in the read itself via a grouped subquery join over
+`inventory_transactions` (backed by the existing `product_id` index —
+`IDX_2520d97de0c9a0fbfc9b00f4c1`), so `low`/`out` are real `WHERE` conditions and
+`?status=low&pageSize=50` pages the low-stock set instead of taking 50 products by name
+and *then* filtering. This is exactly the change Phase 11 §7 predicted this trigger
+would force ("moving the low/out filter into SQL"), done deliberately and
+`EXPLAIN`-sane. **A reviewer arriving from Phases 11 and 12 — each of which shipped a
+migration — will look for one; there is none.** It is a query rewrite and additive
+query params, nothing in the schema.
+
+**Phase 13 §7's frontend-test trigger fired here, as that plan said it would.** Phase
+13 named "the first phase that adds genuinely new frontend *logic* rather than
+relocating existing logic" as the one that should add the test harness for its own
+behaviour. Paging is that logic — `page` state, reset-to-1-on-filter-change, disable
+Prev/Next at the ends, the off-by-one-prone `Math.ceil(total / pageSize)`. What was
+added, kept small: `frontend/pager.js` (the pure arithmetic, `pagerModel`), a first
+`frontend/package.json` with one devDependency (`jsdom`), and `frontend/test/` with a
+pure `pager.test.js` and one jsdom `products-list.test.js`; `npm test` runs
+`node --test`. No bundler, no build step, no config — and `serve.js` stays CJS and
+byte-for-byte unchanged because the new `package.json` carries no `"type"` field
+(Node reparses the `.js` modules as ESM on its own). This is the frontend's first
+`node_modules`, resisted since `serve.js` was written and by Phase 13 for a *bundler*;
+a `node --test` harness is not a bundler, and "the first real frontend logic ships
+untested" is the outcome Phase 13 §7's trigger exists to prevent.

@@ -251,3 +251,14 @@ These affect the UI mockup and should be resolved before or during that phase.
   the CI `lint` step now blocks, and the eslint tree is clean. §4/§5/§7 unchanged; no
   application behaviour, no migration, no `domain-model.md` change. Q-4 and Q-7 remain
   open.
+- **[Added 2026-09-07, Phase 17]** Searchable / typeahead pickers
+  (`docs/phase-17-plan.md`, `api.md`, `requirements.md`'s Phase 17 note,
+  `business-rules.md`'s Phase 17 line, `docs/architecture-observations.md`'s Phase 17
+  section). Same shape as the Phase 7, 10, 11, 14, and 15 entries, not Phase 9's or
+  Phase 12's: §4 gains no user goal and §5 no use case — a field you type into to
+  filter its options is a screen affordance over an existing capability, not a product
+  decision — and §7 gains no scope. It finishes the follow-on Phase 14 §7 named (the
+  stock-in supplier picker, the History product filter, and the Categories product
+  count no longer read the whole catalogue), and resolves none of §10's open
+  questions; Q-4 (sale concept) and Q-7 (multi-location) remain exactly as open as
+  before, untouched since Phase 5.

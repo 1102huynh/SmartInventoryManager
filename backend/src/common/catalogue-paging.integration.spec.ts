@@ -7,6 +7,7 @@ import { EntityStatus } from './enums/entity-status.enum';
 import { Paged } from './pagination';
 import { UserRole } from './enums/user-role.enum';
 import { createTestDataSource } from '../database/test-data-source';
+import { Product } from '../products/product.entity';
 import { SuppliersService } from '../suppliers/suppliers.service';
 import { Supplier } from '../suppliers/supplier.entity';
 import { UsersService } from '../users/users.service';
@@ -136,6 +137,69 @@ describe('catalogue list paging — suppliers / categories / users (integration)
         'Category 03',
         'Category 04',
       ]);
+    });
+
+    // Phase 17 (docs/phase-17-plan.md §2): the paged branch carries a server-computed
+    // `productCount` per row, so the Categories admin screen stops fetching the whole
+    // product catalogue to count client-side.
+    describe('productCount (Phase 17)', () => {
+      beforeEach(async () => {
+        const catRepo = dataSource.getRepository(Category);
+        const prodRepo = dataSource.getRepository(Product);
+        const c0 = await catRepo.findOneByOrFail({ name: 'Category 00' });
+        const c1 = await catRepo.findOneByOrFail({ name: 'Category 01' });
+        // 3 products in Category 00, 1 in Category 01, 0 elsewhere; plus one
+        // uncategorised product that must not be counted against any row.
+        for (let i = 0; i < 3; i++) {
+          await prodRepo.save({
+            sku: `C0-${i}`,
+            name: `C0 product ${i}`,
+            unit: 'ea',
+            categoryId: c0.id,
+          });
+        }
+        await prodRepo.save({
+          sku: 'C1-0',
+          name: 'C1 product 0',
+          unit: 'ea',
+          categoryId: c1.id,
+        });
+        await prodRepo.save({
+          sku: 'NONE-0',
+          name: 'Uncategorised',
+          unit: 'ea',
+          categoryId: null,
+        });
+      });
+
+      it('the paged rows carry the right count, including 0', async () => {
+        const page = asPage(
+          await categories.findAll({ page: 1, pageSize: 12 }),
+        );
+        const byName = Object.fromEntries(
+          page.items.map((c) => [c.name, c.productCount]),
+        );
+        expect(byName['Category 00']).toBe(3);
+        expect(byName['Category 01']).toBe(1);
+        expect(byName['Category 02']).toBe(0);
+        // The uncategorised product is counted against no row — every count sums to
+        // the categorised products only.
+        const summed = page.items.reduce((n, c) => n + c.productCount, 0);
+        expect(summed).toBe(4);
+      });
+
+      it('productCount is a real number, not a bigint string from pg', async () => {
+        const page = asPage(await categories.findAll({ page: 1, pageSize: 1 }));
+        expect(typeof page.items[0].productCount).toBe('number');
+      });
+
+      it('the no-param path returns bare Category rows with no productCount', async () => {
+        const rows = await categories.findAll();
+        expect(Array.isArray(rows)).toBe(true);
+        for (const row of rows as Category[]) {
+          expect(row).not.toHaveProperty('productCount');
+        }
+      });
     });
   });
 

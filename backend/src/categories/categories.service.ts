@@ -9,10 +9,24 @@ import { AuditService } from '../audit/audit.service';
 import { AuditEntityType } from '../common/enums/audit-entity-type.enum';
 import { AuditEventType } from '../common/enums/audit-event-type.enum';
 import { Paged, pageEnvelope, resolvePaging } from '../common/pagination';
+import { Product } from '../products/product.entity';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { QueryCategoriesDto } from './dto/query-categories.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { Category } from './category.entity';
+
+// Phase 17 (docs/phase-17-plan.md §2): the paged `findAll` attaches a `productCount`
+// to each row. A plain return type, not a DTO — nothing is validated — the same call
+// `ProductWithStock` makes in products.service.ts.
+export interface CategoryWithCount extends Category {
+  productCount: number;
+}
+
+// The computed column the paged query adds via `addSelect`, read back off
+// `getRawAndEntities` (Phase 17, the Phase 14 Fork B pattern).
+interface RawCount {
+  productCount: string | number | null;
+}
 
 @Injectable()
 export class CategoriesService {
@@ -29,19 +43,51 @@ export class CategoriesService {
   // Phase 14 (docs/phase-14-plan.md §1): optional `page`/`pageSize` (the DTO is new
   // this phase — this method took no argument before). Omitted — the case
   // `Store.loadReferenceData` hits to fill the `CATEGORIES` cache — it returns every
-  // category, alphabetical, exactly as before. Supplied, a paged envelope for the
-  // Categories admin screen.
+  // category, alphabetical, exactly as before: a bare `Category[]` with no computed
+  // fields.
+  //
+  // Phase 17 (docs/phase-17-plan.md §2): the *paged* branch — only ever reached by the
+  // Categories admin screen — now also carries `productCount` per row, so that screen
+  // stops fetching the whole product catalogue just to count client-side (issue #7,
+  // one of Phase 14 §1's "second consumer" reads). The count is computed in the query
+  // via a grouped subquery join over `products` and read back off `getRawAndEntities`
+  // — the pattern Phase 14 Fork B established in `ProductsService.findAll`. The
+  // no-param branch is deliberately left untouched: the reference cache never needs
+  // the count and its bare-array shape is a contract every product form's dropdown
+  // relies on.
   async findAll(
     query: QueryCategoriesDto = {},
-  ): Promise<Category[] | Paged<Category>> {
+  ): Promise<Category[] | Paged<CategoryWithCount>> {
     const order = { name: 'ASC' as const };
     const paging = resolvePaging(query);
     if (!paging) return this.categoriesRepository.find({ order });
-    const [items, total] = await this.categoriesRepository.findAndCount({
-      order,
-      skip: paging.skip,
-      take: paging.take,
-    });
+
+    // Categories carry no filter (no search, no status), so `total` is the whole
+    // table — a plain COUNT, not a `getCount()` over the joined builder.
+    const total = await this.categoriesRepository.count();
+    const { entities, raw } = await this.categoriesRepository
+      .createQueryBuilder('category')
+      .leftJoin(
+        (sub) =>
+          sub
+            .select('product.category_id', 'category_id')
+            .addSelect('COUNT(*)', 'count')
+            .from(Product, 'product')
+            .groupBy('product.category_id'),
+        'product_agg',
+        'product_agg.category_id = category.id',
+      )
+      .addSelect('COALESCE(product_agg.count, 0)', 'productCount')
+      .orderBy('category.name', 'ASC')
+      .offset(paging.skip)
+      .limit(paging.take)
+      .getRawAndEntities<RawCount>();
+
+    const items: CategoryWithCount[] = entities.map((category, i) => ({
+      ...category,
+      // pg returns COUNT(*) as a bigint string.
+      productCount: Number(raw[i]?.productCount ?? 0),
+    }));
     return pageEnvelope(items, total, paging);
   }
 

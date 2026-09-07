@@ -1,6 +1,6 @@
-# API Documentation — Phase 14
+# API Documentation — Phase 17
 
-Status: Phase 14 — Catalogue Paging
+Status: Phase 17 — Searchable / Typeahead Pickers
 Base URL: `http://localhost:3000` (see `backend/.env.example`)
 
 Every resource response includes `createdAt` (an ISO timestamp, server-set, never
@@ -103,6 +103,17 @@ The catalogue routes are still **unbounded by default** — three of the four mu
 for the pickers and the cache — so the unbounded-read note in
 `docs/architecture-observations.md` is only *partly* retired.
 
+**Phase 17 (`docs/phase-17-plan.md`): the pickers that read the whole set are gone.**
+The stock-in wizard's supplier field and the Inventory History product filter are now
+search-as-you-type controls that query `GET /suppliers?search=&status=active` and
+`GET /products?search=` a page (`pageSize=20`) at a time — no new params, the Phase 14
+ones. The Categories screen's client-side product count is now a server-computed
+`productCount` on the paged `GET /categories` (below). So `GET /products` and
+`GET /suppliers` have **no caller left that wants every row**; only `GET /categories`
+still does, via `Store.loadReferenceData` (the `CATEGORIES` cache). The
+unbounded-read note is retired for the first two and survives on that one path — see
+`architecture-observations.md`'s Phase 17 section.
+
 ## Auth
 
 | Method | Path | Body | Notes |
@@ -115,7 +126,7 @@ for the pickers and the cache — so the unbounded-read note in
 
 | Method | Path | Body | Notes |
 |---|---|---|---|
-| GET | `/categories` | `?page=&pageSize=` | All categories, alphabetical. **Optional paging (Phase 14):** with `page` or `pageSize`, returns `{ items, page, pageSize, total }`; with neither (the `CATEGORIES` reference-cache path), the bare array. |
+| GET | `/categories` | `?page=&pageSize=` | All categories, alphabetical. **Optional paging (Phase 14):** with `page` or `pageSize`, returns `{ items, page, pageSize, total }`; with neither (the `CATEGORIES` reference-cache path), the bare array. **Phase 17:** each item in the *paged* envelope also carries `productCount` — a server-side `COUNT(*)` of products in that category (computed in the read, not stored) — so the Categories screen no longer fetches the whole product catalogue to count. The bare-array response is unchanged and carries no `productCount`. |
 | POST | `/categories` | `{ name }` | **Owner only.** 409 on duplicate name. |
 | PATCH | `/categories/:id` | `{ name }` | **Owner only.** 404 if missing; 409 on duplicate name. |
 | DELETE | `/categories/:id` | | **Owner only.** 204 on success; any product referencing this category has its `categoryId` set to `null` (`ON DELETE SET NULL`). |
@@ -124,7 +135,7 @@ for the pickers and the cache — so the unbounded-read note in
 
 | Method | Path | Body / Query | Notes |
 |---|---|---|---|
-| GET | `/suppliers` | `?search=&status=active\|inactive&page=&pageSize=` | **Optional paging (Phase 14):** with `page` or `pageSize`, `{ items, page, pageSize, total }`; with neither (the stock-in wizard's supplier picker), the bare array. |
+| GET | `/suppliers` | `?search=&status=active\|inactive&page=&pageSize=` | **Optional paging (Phase 14):** with `page` or `pageSize`, `{ items, page, pageSize, total }`; with neither, the bare array. **Phase 17:** the stock-in wizard's supplier picker is now a typeahead sending `?search=&status=active&pageSize=20`, so it takes the envelope path; the bare array remains for any future non-screen caller. |
 | GET | `/suppliers/:id` | | 404 if missing |
 | POST | `/suppliers` | `{ name, contactName?, email?, phone? }` | **Owner only.** |
 | PATCH | `/suppliers/:id` | same shape, all optional | **Owner only.** |
@@ -134,7 +145,7 @@ for the pickers and the cache — so the unbounded-read note in
 
 | Method | Path | Body / Query | Notes |
 |---|---|---|---|
-| GET | `/products` | `?search=&status=active\|inactive\|low\|out&categoryId=&page=&pageSize=` | Response items include computed `currentStock`, `lowStock`, `outOfStock`, `hasHistory`. **Optional paging (Phase 14):** with `page` or `pageSize`, `{ items, page, pageSize, total }` (each item carries the same computed fields); with neither (the wizard product picker, the category screen's product-count read, the History filter), the bare array. `status=low`/`out` is a SQL `WHERE` condition now (current stock is computed in the query), so `?status=low&page=…` pages the low-stock set — not the first `pageSize` by name then filtered. |
+| GET | `/products` | `?search=&status=active\|inactive\|low\|out&categoryId=&page=&pageSize=` | Response items include computed `currentStock`, `lowStock`, `outOfStock`, `hasHistory`. **Optional paging (Phase 14):** with `page` or `pageSize`, `{ items, page, pageSize, total }` (each item carries the same computed fields); with neither, the bare array. `status=low`/`out` is a SQL `WHERE` condition now (current stock is computed in the query), so `?status=low&page=…` pages the low-stock set — not the first `pageSize` by name then filtered. **Phase 17:** the History screen's product filter is now a typeahead sending `?search=&pageSize=20`; the category screen's product-count read is gone (server-side `productCount` on `/categories` instead). No caller now requests the whole product list. |
 | GET | `/products/:id` | | 404 if missing |
 | POST | `/products` | `{ name, sku, unit, categoryId?, lowStockThreshold? }` | **Owner only.** 409 on duplicate SKU |
 | PATCH | `/products/:id` | `{ name, unit, categoryId?, lowStockThreshold?, sku? }` | **Owner only.** `sku` change rejected (409) once the product has any transaction history (BR-001) |

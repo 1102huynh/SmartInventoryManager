@@ -157,6 +157,8 @@ export const Store = {
   // bare `GET /categories` with no params, feeding the global `CATEGORIES` cache
   // every product form's dropdown reads. This one always sends `page`/`pageSize` and
   // returns the `{ items, page, pageSize, total }` envelope.
+  // Phase 17 (docs/phase-17-plan.md §2): each item also carries `productCount` — the
+  // server-side count that replaced this screen's whole-catalogue client-side scan.
   listCategoriesPaged({ page, pageSize } = {}){
     const q = new URLSearchParams();
     if (page) q.set('page', page);

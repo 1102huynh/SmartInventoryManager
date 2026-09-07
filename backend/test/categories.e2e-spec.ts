@@ -249,4 +249,51 @@ describe('Categories (e2e)', () => {
       }
     });
   });
+
+  // Phase 17 (docs/phase-17-plan.md §2): the paged envelope's items carry a
+  // server-computed `productCount`; the bare-array (reference-cache) response does
+  // not.
+  describe('product count on the paged read (Phase 17)', () => {
+    it('paged items carry a numeric productCount that tracks the catalogue', async () => {
+      const bev = await auth(
+        request(app.getHttpServer()).post('/categories'),
+      ).send({ name: 'Beverages' });
+      await auth(request(app.getHttpServer()).post('/categories')).send({
+        name: 'Snacks',
+      });
+      for (const sku of ['B-1', 'B-2']) {
+        await auth(request(app.getHttpServer()).post('/products'))
+          .send({
+            name: `Drink ${sku}`,
+            sku,
+            unit: 'each',
+            categoryId: bev.body.id,
+          })
+          .expect(201);
+      }
+
+      const res = await auth(
+        request(app.getHttpServer()).get('/categories?page=1&pageSize=10'),
+      );
+      expect(res.status).toBe(200);
+      const items = res.body.items as Array<{
+        name: string;
+        productCount: number;
+      }>;
+      const counts = Object.fromEntries(
+        items.map((c) => [c.name, c.productCount]),
+      );
+      expect(counts).toEqual({ Beverages: 2, Snacks: 0 });
+      expect(typeof counts.Beverages).toBe('number');
+    });
+
+    it('the bare-array response has no productCount key', async () => {
+      await auth(request(app.getHttpServer()).post('/categories')).send({
+        name: 'Beverages',
+      });
+      const res = await auth(request(app.getHttpServer()).get('/categories'));
+      expect(res.status).toBe(200);
+      expect(res.body[0]).not.toHaveProperty('productCount');
+    });
+  });
 });

@@ -324,6 +324,17 @@ makes the CI `lint` step blocking and clears the eslint tree (a formatting sweep
 test-only rule relaxed, two dead variables removed). It changes no business behaviour:
 the full backend suite passes unchanged (14/143, 7/90).
 
+**[2026-09-07, Phase 17]** No new BR — the seventh such line. `docs/phase-17-plan.md`
+makes the stock-in supplier field and the Inventory History product filter
+type-to-search controls, and gives the Categories screen a server-side product count.
+Searching a list and counting its members are not rules about the business: BR-013
+(an inactive supplier cannot be selected on a stock-in — still enforced server-side,
+the typeahead only queries `status=active`), BR-070–074 (who may read what) all say
+exactly what they said before. The category `productCount` is a `COUNT(*)` computed on
+read via a subquery join — the same "current stock is `SUM(quantity_delta)`, never a
+stored column" posture as BR-040/042, one table over. `requirements.md`'s Phase 17
+note carries the "these FRs are unchanged" reading.
+
 ## Adjustment Approval
 
 - **BR-085** [Decided 2026-09-03, Phase 12] — **A Staff-initiated adjustment is a

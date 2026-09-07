@@ -11,7 +11,6 @@ import { Store } from '../api.js';
 // a Category is just a name, so a whole extra screen per action would be more
 // navigation than the entity is worth.
 export function categoryList(container, query){
-  let products = []; // used only to compute each category's product count client-side
   let categories = []; // Phase 14: the current page's rows (server-ordered by name)
   let editingId = null;
   let editValue = '';
@@ -19,23 +18,20 @@ export function categoryList(container, query){
   let confirmDeleteId = null;
   let newName = '';
   let addError = '';
-  // Phase 14 (docs/phase-14-plan.md §3): this screen now reads a *page* of categories
-  // via Store.listCategoriesPaged — not the global CATEGORIES cache, which
-  // loadReferenceData still fills unpaged for every product form's dropdown. The
-  // product-count read (Store.listProducts, no paging param) stays a whole-catalogue
-  // fetch; that read is one of the §1 "second consumer" callers the optional-paging
-  // design protects.
+  // Phase 14 (docs/phase-14-plan.md §3): this screen reads a *page* of categories via
+  // Store.listCategoriesPaged — not the global CATEGORIES cache, which loadReferenceData
+  // still fills unpaged for every product form's dropdown.
+  // Phase 17 (docs/phase-17-plan.md §3): each row's product count now comes from the
+  // server on that same paged read (`c.productCount`). This screen used to fetch the
+  // whole product catalogue and count client-side — one of Phase 14 §1's "second
+  // consumer" unbounded reads (issue #7); that fetch is gone.
   const PAGE_SIZE = 50;
   let page = 1;
   let total = 0;
 
   function load(){
     container.innerHTML = header() + `<div class="table-wrap"><table class="data-table"><tbody>${UI.skeletonRows(3,4)}</tbody></table></div>`;
-    Promise.all([
-      Store.listProducts(),
-      Store.listCategoriesPaged({ page, pageSize: PAGE_SIZE }),
-    ]).then(([productList, catPage]) => {
-      products = productList;
+    Store.listCategoriesPaged({ page, pageSize: PAGE_SIZE }).then(catPage => {
       categories = catPage.items;
       total = catPage.total;
       page = catPage.page;
@@ -53,8 +49,10 @@ export function categoryList(container, query){
     </div>`;
   }
 
-  function countFor(categoryId){
-    return products.filter(p => p.categoryId === categoryId).length;
+  // Phase 17: the count is a field on the row now (server-computed), not a client-side
+  // scan of every product. `?? 0` guards a row that somehow arrives without it.
+  function countFor(c){
+    return c.productCount ?? 0;
   }
 
   function addFormHtml(){
@@ -81,7 +79,7 @@ export function categoryList(container, query){
   }
 
   function rowHtml(c){
-    const count = countFor(c.id);
+    const count = countFor(c);
     // Delete confirmation states the consequence explicitly (§3: "N products will
     // become uncategorized") rather than a generic "are you sure?", since delete is
     // irreversible and silently uncategorizes anything currently using it.
@@ -174,7 +172,7 @@ export function categoryList(container, query){
         // A delete can leave the current page past the end (e.g. the only row on the
         // last page) — step back one if this page is now empty.
         if (categories.length === 1 && page > 1) page -= 1;
-        return load(); // re-fetch products too — a deleted category may have just orphaned some
+        return load(); // re-fetch the page — counts on other rows are unaffected, but the row is gone
       }).catch(err => { UI.toast(err.message, 'error'); confirmDeleteId = null; render(); });
     }));
 

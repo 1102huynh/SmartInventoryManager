@@ -153,10 +153,13 @@ the LTS 22 that the plan recommended) is an owner choice recorded in
 `docs/architecture-observations.md`; the lesson is that *some* version is written down
 and both environments read the same file.
 
-## What CI here does not do
+## What CI here gates, and what it does not do
 
-- It is **not a required status check** yet — a red run does not block a push. Making
-  it a merge gate is a repository setting (Settings → Branches), deferred until there
-  is a second contributor or a `main`/`develop` split.
+- `lint`, `test` and `e2e` are **required status checks on `develop`**, and `develop`
+  requires a pull request (0 approvals) — a red run blocks the merge (issue #6). This
+  is a repository setting (Settings → Branches / the branch-protection API), not a file
+  in the repo; the exact settings are recorded in `docs/phase-16-plan.md` §7. The
+  `frontend` job runs but is deliberately not required, and administrators are not
+  forced through the gate (the solo author can still push directly in a pinch).
 - No coverage threshold, no deploy, no Node version matrix, no build caching beyond the
   npm download cache. Each is a deliberate "not yet" in `docs/phase-15-plan.md` §7.

@@ -475,10 +475,13 @@ response bodies, two orphaned imports/vars). What "clean" required:
   for the local fix-on-save habit. The `ci.yml` eslint step runs `lint:check` and its
   `continue-on-error` is gone.
 
-**Branch protection is now genuinely one click** — the only real blocker, a lint check
-that could never pass, is gone. It stays unflipped because Phase 15 Fork F's trigger
-(a second contributor) still has not fired; `docs/phase-16-plan.md` §7 carries the
-exact repository settings for the day it does.
+**Branch protection is now on `develop`** (issue #6, after Phase 16 made a permanently-red
+lint check the last obstacle). Required status checks: `lint`, `test`, `e2e`; a pull
+request is required with 0 approvals, so the solo author still self-merges but nothing
+merges red. `enforce_admins` is off — the author can push directly in a pinch — and the
+`frontend` job is deliberately not required. It was flipped ahead of Phase 15 Fork F's
+stated trigger (a second contributor) because the cost of doing so early is nil once the
+checks are trustworthy. `docs/phase-16-plan.md` §7 carries the exact settings.
 
 **CI is the first thing that runs the migration chain against an empty database.**
 Phases 10 and 12 shipped migrations; a local `smart_inventory` / `smart_inventory_e2e`
@@ -509,9 +512,10 @@ real defect in the migration chain, not a CI problem (`docs/phase-15-plan.md`
 an oversight:
 
 - **No branch protection / required status check.** That is a GitHub *repository
-  setting*, not a file in the repo, and with one contributor pushing straight to
-  `develop` it would only block the author. Deferred until a second contributor or a
-  `main`/`develop` split; it is one click then (`docs/phase-15-plan.md` §1 Fork F, §7).
+  setting*, not a file in the repo, and Phase 15's CI still had a permanently-red lint
+  check that made it impossible anyway. *Done later:* Phase 16 fixed the lint check and
+  issue #6 flipped protection on `develop` (`lint`/`test`/`e2e` required, PR required,
+  0 approvals) — see the Phase 16 addition above.
 - **No deploy pipeline.** This workflow is CI, not CD. It runs entirely on throwaway
   values — the same dev defaults as `backend/.env.example`, no GitHub Actions secret
   anywhere. A deploy job would need real secrets and an environment target; that is a

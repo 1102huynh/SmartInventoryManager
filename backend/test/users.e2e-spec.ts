@@ -141,6 +141,47 @@ describe('Users / accounts (e2e)', () => {
     ).toBe(403);
   });
 
+  // -------------------------------------------------------------- Phase 14: optional paging --
+  // docs/phase-14-plan.md §5. `?page=&pageSize=` is optional; the envelope's `items`
+  // carry the same computed `locked` boolean the bare-array shape does.
+  it('GET /users paged returns { items, page, pageSize, total } with locked on each item', async () => {
+    // owner + staff already seeded; add a few more so a small page is a real slice.
+    for (let i = 0; i < 4; i++) {
+      await asOwner(request(app.getHttpServer()).post('/users')).send({
+        name: `Extra ${i}`,
+        email: `extra${i}@example.com`,
+        role: 'staff',
+        password: 'a-real-password',
+      });
+    }
+    const res = await asOwner(
+      request(app.getHttpServer()).get('/users?page=1&pageSize=3'),
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ page: 1, pageSize: 3, total: 6 });
+    expect(res.body.items).toHaveLength(3);
+    expect(res.body.items[0]).toEqual(
+      expect.objectContaining({ locked: false }),
+    );
+    expect(JSON.stringify(res.body)).not.toMatch(/passwordHash/);
+    expect(JSON.stringify(res.body)).not.toMatch(/lockedUntil/);
+  });
+
+  it('GET /users with no paging param stays a bare array', async () => {
+    const res = await asOwner(request(app.getHttpServer()).get('/users'));
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+
+  it('rejects a bad pageSize on GET /users with 400', async () => {
+    for (const qs of ['pageSize=0', 'pageSize=101', 'page=0']) {
+      const res = await asOwner(
+        request(app.getHttpServer()).get(`/users?${qs}`),
+      );
+      expect(res.status).toBe(400);
+    }
+  });
+
   // -------------------------------------------------------------- create + login round-trip --
   it('Owner creates a user, and that user can immediately log in with the password they were given', async () => {
     const created = await asOwner(

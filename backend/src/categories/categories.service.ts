@@ -8,7 +8,9 @@ import { Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
 import { AuditEntityType } from '../common/enums/audit-entity-type.enum';
 import { AuditEventType } from '../common/enums/audit-event-type.enum';
+import { Paged, pageEnvelope, resolvePaging } from '../common/pagination';
 import { CreateCategoryDto } from './dto/create-category.dto';
+import { QueryCategoriesDto } from './dto/query-categories.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { Category } from './category.entity';
 
@@ -24,8 +26,23 @@ export class CategoriesService {
     private readonly auditService: AuditService,
   ) {}
 
-  findAll(): Promise<Category[]> {
-    return this.categoriesRepository.find({ order: { name: 'ASC' } });
+  // Phase 14 (docs/phase-14-plan.md §1): optional `page`/`pageSize` (the DTO is new
+  // this phase — this method took no argument before). Omitted — the case
+  // `Store.loadReferenceData` hits to fill the `CATEGORIES` cache — it returns every
+  // category, alphabetical, exactly as before. Supplied, a paged envelope for the
+  // Categories admin screen.
+  async findAll(
+    query: QueryCategoriesDto = {},
+  ): Promise<Category[] | Paged<Category>> {
+    const order = { name: 'ASC' as const };
+    const paging = resolvePaging(query);
+    if (!paging) return this.categoriesRepository.find({ order });
+    const [items, total] = await this.categoriesRepository.findAndCount({
+      order,
+      skip: paging.skip,
+      take: paging.take,
+    });
+    return pageEnvelope(items, total, paging);
   }
 
   async create(dto: CreateCategoryDto, actorId: number): Promise<Category> {

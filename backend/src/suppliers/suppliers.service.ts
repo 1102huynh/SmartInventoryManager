@@ -1,10 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ILike, Repository } from 'typeorm';
+import { FindOptionsWhere, ILike, Repository } from 'typeorm';
 import { AuditService } from '../audit/audit.service';
 import { AuditEntityType } from '../common/enums/audit-entity-type.enum';
 import { AuditEventType } from '../common/enums/audit-event-type.enum';
 import { EntityStatus } from '../common/enums/entity-status.enum';
+import { Paged, pageEnvelope, resolvePaging } from '../common/pagination';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { QuerySuppliersDto } from './dto/query-suppliers.dto';
 import { UpdateSupplierDto } from './dto/update-supplier.dto';
@@ -18,16 +19,29 @@ export class SuppliersService {
     private readonly auditService: AuditService,
   ) {}
 
-  findAll(query: QuerySuppliersDto): Promise<Supplier[]> {
-    return this.suppliersRepository.find({
-      where: {
-        ...(query.status ? { status: query.status } : {}),
-        // ILike is TypeORM's case-insensitive LIKE — matches the mockup's
-        // case-insensitive search behavior (Store.listSuppliers used .toLowerCase()).
-        ...(query.search ? { name: ILike(`%${query.search}%`) } : {}),
-      },
-      order: { name: 'ASC' },
+  // Phase 14 (docs/phase-14-plan.md §1): optional `page`/`pageSize`. Omitted, this
+  // returns the bare array the stock-in wizard's supplier picker still calls (no
+  // rewrite — `suppliers` has no computed filter, unlike products). Supplied, a paged
+  // envelope via `findAndCount` (the one extra `COUNT(*)` a `total` costs).
+  async findAll(
+    query: QuerySuppliersDto,
+  ): Promise<Supplier[] | Paged<Supplier>> {
+    const where: FindOptionsWhere<Supplier> = {
+      ...(query.status ? { status: query.status } : {}),
+      // ILike is TypeORM's case-insensitive LIKE — matches the mockup's
+      // case-insensitive search behavior (Store.listSuppliers used .toLowerCase()).
+      ...(query.search ? { name: ILike(`%${query.search}%`) } : {}),
+    };
+    const order = { name: 'ASC' as const };
+    const paging = resolvePaging(query);
+    if (!paging) return this.suppliersRepository.find({ where, order });
+    const [items, total] = await this.suppliersRepository.findAndCount({
+      where,
+      order,
+      skip: paging.skip,
+      take: paging.take,
     });
+    return pageEnvelope(items, total, paging);
   }
 
   async findOne(id: number): Promise<Supplier> {

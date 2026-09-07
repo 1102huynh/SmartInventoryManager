@@ -8,11 +8,14 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { CurrentUserId } from '../common/decorators/current-user-id.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../common/enums/user-role.enum';
+import { Paged } from '../common/pagination';
 import { CreateUserDto } from './dto/create-user.dto';
+import { QueryUsersDto } from './dto/query-users.dto';
 import { SetUserPasswordDto } from './dto/set-user-password.dto';
 import { SetUserStatusDto } from './dto/set-user-status.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -64,10 +67,18 @@ function withLockStatus(usersService: UsersService, user: User) {
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
+  // Phase 14 (docs/phase-14-plan.md §1): `?page=&pageSize=` optional. `withLockStatus`
+  // is applied per row in either shape — the bare array, or the envelope's `items`.
   @Get()
-  async findAll() {
-    const users = await this.usersService.findAll();
-    return users.map((u) => withLockStatus(this.usersService, u));
+  async findAll(@Query() query: QueryUsersDto) {
+    const result = await this.usersService.findAll(query);
+    if (Array.isArray(result)) {
+      return result.map((u) => withLockStatus(this.usersService, u));
+    }
+    return {
+      ...result,
+      items: result.items.map((u) => withLockStatus(this.usersService, u)),
+    } satisfies Paged<ReturnType<typeof withLockStatus>>;
   }
 
   @Get(':id')

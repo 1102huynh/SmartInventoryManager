@@ -13,8 +13,10 @@ import { AuditEntityType } from '../common/enums/audit-entity-type.enum';
 import { AuditEventType } from '../common/enums/audit-event-type.enum';
 import { EntityStatus } from '../common/enums/entity-status.enum';
 import { UserRole } from '../common/enums/user-role.enum';
+import { Paged, pageEnvelope, resolvePaging } from '../common/pagination';
 import { hashPassword, verifyPassword } from '../common/password';
 import { CreateUserDto } from './dto/create-user.dto';
+import { QueryUsersDto } from './dto/query-users.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { User } from './user.entity';
 
@@ -31,8 +33,21 @@ export class UsersService {
     private readonly auditService: AuditService,
   ) {}
 
-  findAll(): Promise<User[]> {
-    return this.usersRepository.find({ order: { id: 'ASC' } });
+  // Phase 14 (docs/phase-14-plan.md §1): optional `page`/`pageSize` (the DTO is new
+  // this phase). `/users` is Owner-only and tiny in every realistic deployment, and
+  // it is the one catalogue route with no whole-set second consumer — so paging here
+  // is a pure list-screen convenience. Omitted, the bare array as before; the
+  // controller maps either shape through `withLockStatus`.
+  async findAll(query: QueryUsersDto = {}): Promise<User[] | Paged<User>> {
+    const order = { id: 'ASC' as const };
+    const paging = resolvePaging(query);
+    if (!paging) return this.usersRepository.find({ order });
+    const [items, total] = await this.usersRepository.findAndCount({
+      order,
+      skip: paging.skip,
+      take: paging.take,
+    });
+    return pageEnvelope(items, total, paging);
   }
 
   async findOne(id: number): Promise<User> {

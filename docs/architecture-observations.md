@@ -542,12 +542,15 @@ notes as part of its `feat` commit:
   `database-transactions.md`.
 - **Phase 15** (`14646d6`) — `ci-and-environments.md` (new).
 
-The one item on the original list with no learning note is **Phase 13's frontend
-module architecture**, and `docs/phase-13-plan.md` §4 made that note explicitly
-optional — the structural account lives in this file, above ("the frontend's first
-structural phase"). The retro-documentation `docs/phase-15-plan.md` §7 anticipated is
-therefore already done, incrementally, by the phases themselves. The two plan §7s are
-left as the historical snapshots they are.
+**Phase 13's frontend module architecture** was the one item on the original list with
+no learning note — `docs/phase-13-plan.md` §4 made that note explicitly optional, with
+the structural account here, above ("the frontend's first structural phase"). Issue #5
+added it: `docs/learning-notes/frontend-module-architecture.md` (native ES modules over
+a bundler, the live-binding trap and accessor pattern, resource-grouped view files) —
+the folder's first note about the frontend rather than the NestJS backend. The
+retro-documentation `docs/phase-15-plan.md` §7 anticipated is therefore done,
+incrementally by the phases themselves plus that one note. The two plan §7s are left as
+the historical snapshots they are.
 
 ## Cross-cutting: catalogue paging, and a precondition partly retired (Phase 14)
 

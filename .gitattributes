@@ -1,0 +1,7 @@
+# Phase 16 (docs/phase-16-plan.md Fork F): normalise every text file to LF in the
+# repository and on checkout, regardless of the contributor's core.autocrlf setting.
+# This makes an eslint/prettier run byte-deterministic across a Windows dev machine
+# and the Linux CI runner — before this, the working tree was CRLF while the blobs
+# were LF, so `eslint --fix` flipped line endings and "clean" meant different bytes
+# in each place. Binary files are auto-detected by `text=auto` and left untouched.
+* text=auto eol=lf

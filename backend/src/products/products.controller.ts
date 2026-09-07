@@ -67,7 +67,10 @@ export class ProductsController {
   @Roles(UserRole.Owner)
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT) // a successful DELETE returns no body — 204, not 200
-  remove(@Param('id', ParseIntPipe) id: number, @CurrentUserId() actorId: number) {
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUserId() actorId: number,
+  ) {
     return this.productsService.remove(id, actorId);
   }
 }

@@ -15,7 +15,6 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import * as bcrypt from 'bcrypt';
 import { DataSource } from 'typeorm';
@@ -35,7 +34,6 @@ const PASSWORD = 'e2e-test-password';
 describe('Users / accounts (e2e)', () => {
   let app: INestApplication;
   let dataSource: DataSource;
-  let jwtService: JwtService;
   let ownerToken: string;
   let staffToken: string;
   let ownerId: number;
@@ -60,7 +58,6 @@ describe('Users / accounts (e2e)', () => {
     );
     await app.init();
     dataSource = moduleRef.get(DataSource);
-    jwtService = moduleRef.get(JwtService);
   });
 
   afterAll(async () => {

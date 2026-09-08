@@ -294,6 +294,19 @@ system guarantees the stored figure still replays from history is a statement ab
 business's relationship to its own numbers. One additive migration (`ADD COLUMN` +
 backfill); no new table, no `domain-model.md` entity, no route or response-shape change.
 
+## Catalogue Ordering Indexes (Phase 24 — no new FR, no schema change)
+
+Phase 24 (`docs/phase-24-plan.md`, issue #14) `EXPLAIN`-measures the Phase 14 paged
+catalogue query at 200 / 1,000 / 10,000 / 100,000 rows and concludes that
+`products.name` / `suppliers.name` do **not** need an index at any scale this product is
+designed for, and that the `users` ordering (`id ASC`) is already served by the
+primary-key B-tree. The fourteenth "no new FR" note: no requirement reads differently.
+Unlike Phases 18, 22, and 23 it does **not** touch `business-rules.md` either — how a
+read is indexed is an implementation fact, not a rule about the business. **No
+migration, no schema change, no code**: the deliverable is the measurement and the
+decision, which discharges the standing conditional Phases 11, 14, and 23 each carried in
+their §7.
+
 ## Cross-Reference Summary
 
 ```

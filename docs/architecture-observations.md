@@ -1010,3 +1010,42 @@ guarantees it still replays from history" is a statement about the business's
 relationship to its own numbers, the same reason BR-090 was a rule and the throttle
 store was not. **No new FR** (the thirteenth such note): reading a number that means
 what BR-040 always said is still FR-023/FR-024.
+
+## Cross-cutting: the catalogue orderings were measured and left unindexed (Phase 24)
+
+Phase 24 (`docs/phase-24-plan.md`, issue #14) discharges a conditional that Phases 11,
+14, and 23 each carried in their §7: *the `products.name` / `suppliers.name` / `users`
+orderings are unindexed — `EXPLAIN` the paged query and add an index only if a realistic
+row count shows one is needed.* It is the first phase in this series (since Phase 6) that
+ships **only a decision** — no code, no migration, no schema change.
+
+**`users` was never the unindexed-sort case.** `GET /users` orders by `id ASC`, and `id`
+is the primary key; Postgres backs every primary key with a unique B-tree, so that read
+has been an ordered index scan since `InitSchema`. Recorded so the `users` half of the
+issue stops being re-raised.
+
+**`products.name` / `suppliers.name`: measured, not added.** `EXPLAIN (ANALYZE, BUFFERS)`
+of the Phase 14 paged query over `TEMP` tables mirroring the real schema, at 200 / 1,000
+/ 10,000 / 100,000 rows, with and without a `name` index (full numbers in
+`phase-24-plan.md` §1). At the product's design scale ("dozens", `product.md` §7 — 1,000
+rows is already past it) the paged read is sub-millisecond and the index is measurement
+noise. `MAX_PAGE_SIZE = 100` pins the first-page sort to a 29 kB `top-N heapsort` at
+every scale, so the sort is not what grows; the `EXISTS` subplan and the seq scan are,
+and a `name` index removes neither. `getCount()` (the envelope's `total`) is a
+`Seq Scan` + `Aggregate` over the filtered set at every scale, unhelped by an ordering
+index. Filtered pages (`status` / `categoryId` / `low` / `out`) cannot be satisfied by a
+`name` B-tree. And a `name` index makes the deep-`OFFSET` page *measurably worse* (100k
+rows: 266 ms → 1795 ms — it walks the index doing ~100k random heap fetches to reach the
+offset). The index earns its keep only at ~100,000 catalogue rows, only on the unfiltered
+first page — the one path already fast enough.
+
+**So the §7 conditional is discharged with evidence rather than carried forward.** This
+is the outcome the "what evidence to look for" section and Phase 11 §7 predicted:
+"adding indexes because they might help" is the speculation to refuse, and the honest
+artifact is the measurement, so the next catalogue phase crosses the bar with a number
+instead of re-deriving the question. The item moves from "deferred, trigger unfired" to
+**measured 2026-09-08, declined** — reopen `issue #14` on a real deployment's row counts
+and a slow-request log, not on a hunch. **No new FR** (the fourteenth such note); **no
+new BR** (how a read is indexed is an implementation fact, the same reason the Phase 21
+throttle-store change filed one); no migration, the first "current phase" marker in this
+series with no `migration:run`.

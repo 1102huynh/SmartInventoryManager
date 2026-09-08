@@ -438,6 +438,14 @@ column and the recompute-on-write mechanism, and BR-043 states that write-path
 invariant. `requirements.md` carries the "no new FR" note (reading a number that means
 what it always meant is still FR-023/FR-024).
 
+**[2026-09-08, Phase 24]** No new BR — the eleventh such line, and back to the "no new
+BR" shape after Phase 23. `docs/phase-24-plan.md` (issue #14) `EXPLAIN`-measures the
+Phase 14 paged catalogue query and decides **not** to add an index on `products.name` /
+`suppliers.name` (the `users` ordering is already the primary-key B-tree). Whether a
+read is backed by an index is an implementation fact about performance, not a rule about
+the business — the same reason the Phase 21 shared-throttle-store change filed a "no new
+BR" line. No BR is touched, reaffirmed, or amended; no schema changes.
+
 ## Adjustment Approval
 
 - **BR-085** [Decided 2026-09-03, Phase 12] — **A Staff-initiated adjustment is a

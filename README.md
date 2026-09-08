@@ -179,24 +179,39 @@ See `docs/learning-notes/ci-and-environments.md`.
 
 ## Current phase
 
-Phase 23 — Materialise `products.current_stock` (`docs/phase-23-plan.md`, issue #13):
-current stock was a `SUM(quantity_delta)` over `inventory_transactions` computed on
-every `GET /products` and every dashboard load (Phase 14 Fork B / Phase 19 moved the
-`SUM` into the products query but did not store it). That table only ever grows — it is
-business history (BR-050/BR-051) and, unlike `audit_events` (Phase 22), cannot be
-pruned — so the aggregate got slower with the age of the business, the last instance of
-the shape Phase 22 acted on. Phase 23 stores it as `products.current_stock`, backfilled
-by migration and **rewritten from the product's full history on every stock write**
-(`InventoryService.insertTransaction`), inside the pessimistic product-row lock the
-write already holds (BR-041). Never patched incrementally, so BR-042 ("current stock
+Phase 24 — Catalogue ordering indexes: measured, not added (`docs/phase-24-plan.md`,
+issue #14): Phases 11, 14, and 23 each carried a §7 line saying the `products.name` /
+`suppliers.name` / `users` orderings are unindexed and an index should be added *only if
+a realistic row count shows the paged query needs one*. Phase 24 runs that measurement —
+`EXPLAIN (ANALYZE, BUFFERS)` of the Phase 14 paged query over synthetic tables at 200 /
+1,000 / 10,000 / 100,000 rows — and decides **no index**. `users` orders by `id`, the
+primary key, so it was always an index scan. For `products.name` / `suppliers.name`: at
+the product's design scale ("dozens", 1,000 rows is already past it) the paged read is
+sub-millisecond; `MAX_PAGE_SIZE = 100` pins the sort; `getCount()` and the filtered
+pages get nothing from a `name` index; and it makes the deep-`OFFSET` page measurably
+worse. The index only pays off near 100,000 rows. **No code, no migration, no schema
+change** — the first "current phase" in this series that ships only a decision; the
+standing §7 conditional is now recorded as *measured, declined — reopen on evidence*.
+"No new FR" (the fourteenth), "no new BR" (the eleventh). Backend suite unchanged and
+green (20 unit/integration suites, 7 e2e). See `docs/architecture-observations.md`'s
+Phase 24 section.
+
+Earlier phases: Phase 23 — Materialise `products.current_stock` (`docs/phase-23-plan.md`,
+issue #13): current stock was a `SUM(quantity_delta)` over `inventory_transactions`
+computed on every `GET /products` and every dashboard load (Phase 14 Fork B / Phase 19
+moved the `SUM` into the products query but did not store it). That table only ever
+grows — it is business history (BR-050/BR-051) and, unlike `audit_events` (Phase 22),
+cannot be pruned — so the aggregate got slower with the age of the business, the last
+instance of the shape Phase 22 acted on. Phase 23 stores it as `products.current_stock`,
+backfilled by migration and **rewritten from the product's full history on every stock
+write** (`InventoryService.insertTransaction`), inside the pessimistic product-row lock
+the write already holds (BR-041). Never patched incrementally, so BR-042 ("current stock
 always replays from history") holds by construction; the column self-heals on the next
 write if a bug ever leaves it wrong (BR-043). `ProductsService.findAll` / `findOne`,
 `DashboardService.getSummary`, and `AdjustmentsService`'s stock reads all read the
 column; the `joinCurrentStock` helper is deleted; `hasHistory` becomes a correlated
-`EXISTS`. `BR-042` amended and `BR-043` added; one "no new FR" note. **Run
-`npm run migration:run`** (`DB_DATABASE=smart_inventory_e2e` too, before the e2e suite).
-Backend suite green (20 unit/integration suites, 7 e2e). See
-`docs/architecture-observations.md`'s Phase 23 section.
+`EXISTS`. `BR-042` amended and `BR-043` added; one "no new FR" note. Needed
+`npm run migration:run`. See `docs/architecture-observations.md`'s Phase 23 section.
 
 Earlier phases: Phase 22 — `audit_events` retention (`docs/phase-22-plan.md`, issue
 #12): `audit_events` grew without bound — every login attempt, anonymous ones included,

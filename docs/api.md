@@ -1,6 +1,6 @@
-# API Documentation — Phase 23
+# API Documentation — Phase 24
 
-Status: Phase 23 — `products.current_stock` materialised (no route or response-shape change)
+Status: Phase 24 — catalogue ordering indexes measured, not added (no API change of any kind; see `docs/phase-24-plan.md`)
 Base URL: `http://localhost:3000` (see `backend/.env.example`)
 
 Every resource response includes `createdAt` (an ISO timestamp, server-set, never

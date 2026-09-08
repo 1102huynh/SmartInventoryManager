@@ -340,3 +340,14 @@ These affect the UI mockup and should be resolved before or during that phase.
   name and Phase 14 Fork B / Phase 19 re-parked, acted on now that Phase 22 closed the
   same shape for `audit_events`. Q-7 (multi-location) remains open, untouched since
   Phase 5.
+- **[Added 2026-09-08, Phase 24]** Catalogue ordering indexes measured, not added
+  (`docs/phase-24-plan.md`, issue #14, `requirements.md`'s Phase 24 note,
+  `business-rules.md`'s Phase 24 line, `docs/architecture-observations.md`'s Phase 24
+  section). Same shape as the Phase 7, 10, 11, 14–17, and 19–21 entries, not Phase 9's,
+  12's, 18's, or 23's: §4 gains no user goal, §5 no use case, §7 no scope — `EXPLAIN`ing
+  the Phase 14 paged query and concluding `products.name` / `suppliers.name` need no
+  index (and that the `users` `id` ordering is already the primary-key B-tree) is a
+  measurement with no observable product change. **No migration, no schema change, no
+  code** — the first entry here whose deliverable is only a decision; it discharges the
+  conditional Phases 11 §7, 14 §7, and 23 §7 each carried. Q-7 (multi-location) remains
+  open, untouched since Phase 5.

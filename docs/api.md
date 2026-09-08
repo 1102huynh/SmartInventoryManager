@@ -1,6 +1,6 @@
-# API Documentation — Phase 19
+# API Documentation — Phase 21
 
-Status: Phase 19 — Dashboard stock counts in one query (no route or shape change)
+Status: Phase 21 — Shared throttle store (no route or shape change)
 Base URL: `http://localhost:3000` (see `backend/.env.example`)
 
 Every resource response includes `createdAt` (an ISO timestamp, server-set, never
@@ -56,6 +56,13 @@ generous global default (120 requests / 60 seconds per client address); `POST
 attempts / 5 minutes) — the throttler guard runs first, ahead of `JwtAuthGuard`, so an
 over-limit request never reaches password verification (BR-079). Both limits are
 configurable (`backend/.env.example`).
+
+**Phase 21 (`docs/phase-21-plan.md`): the limit is enforced consistently across API
+instances.** The throttle count now lives in a shared `throttle_hits` table in the same
+Postgres as everything else, not in each process's memory — so N instances behind the
+same clients enforce the configured rate, not N× it. Behind a load balancer,
+`TRUST_PROXY` must be set (`backend/.env.example`) or every request appears to come from
+the balancer and the now-shared throttle treats all callers as one.
 
 **Phase 9 (`docs/phase-9-plan.md`): every write on `/users`, `/products`,
 `/suppliers`, and `/categories` now also records an audit event** (BR-082), and every

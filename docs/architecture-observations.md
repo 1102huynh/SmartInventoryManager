@@ -824,3 +824,74 @@ migration — the ninth "no new BR" line, the tenth "no new FR" note. The existi
 awaits that stub directly. Phase 13 §7's *other* frontend trigger — a test harness for
 new frontend logic — stays unmet on purpose: a deletion introduces no behaviour to cover,
 and the empty/error panels themselves did not change.
+
+## Cross-cutting: the throttle store's precondition is closed — the first of three (Phase 21)
+
+Phase 21 (`docs/phase-21-plan.md`, issue #11) gave `@nestjs/throttler` a shared,
+Postgres-backed store (`throttle_hits`, a custom `ThrottlerStorage`), replacing its
+default per-process `Map`. The owner confirmed the trigger the "two rate-limiting
+mechanisms" section above wrote down — "if this app is ever deployed with more than one
+running instance in front of the same clients" — is met: a multi-instance deployment is
+planned.
+
+**This is the first of this file's three named unenforced preconditions to be *closed*
+rather than carried.** The Phase 11 section counted three ("the in-memory throttle
+store; the best-effort audit write; this business will not accumulate more products …
+than one response can carry"), and the Phase 14/17 sections whittled the catalogue-read
+one down to "a sliver" without ever removing an item. Phase 21 removes one outright: the
+throttle count now lives in the same Postgres as account lockout, the audit log, and
+every entity, so the "silently becomes per-instance under a second process" failure mode
+the Phase 8 section describes no longer exists. The other two — BR-082's best-effort
+audit write and the unbounded `GET /categories` reference-cache read — are untouched.
+Like Phase 10 closing the `timestamptz` question, this is an entry that finally shrinks
+the ledger rather than growing it.
+
+**Two deliberate divergences from the default store, documented so a reviewer reading
+the two side by side sees they were chosen:**
+
+- **Fixed window, not per-hit sliding expiry.** The stock `ThrottlerStorageService`
+  schedules a `setTimeout` per hit that decrements the counter one `ttl` later; the
+  Postgres store instead keeps one row per key (`hits`, `expires_at`) and resets `hits`
+  to 1 on the first request after `expires_at` lapses. This is what the throttler
+  ecosystem's Redis store does too (`INCR` + `PEXPIRE`), it is easier to reason about,
+  and its boundary burst (up to `2N` across `2·ttl`) is within tolerance for a 120/60s
+  backstop and a 10/300s login limit — the same "quantify the security cost, check it
+  is small" move Phase 8 §1 made for the flat lockout window. `blockDuration` is treated
+  as equal to `ttl` (nothing in this app sets a distinct one); a `blocked_until` column
+  is where a real block period would go if a future phase configures one.
+- **`UNLOGGED` in dev/prod, `LOGGED` under `synchronize`.** The migration creates
+  `throttle_hits` `UNLOGGED` — no WAL for an ephemeral per-request counter, contents
+  truncated after an unclean shutdown (the limits just reset for a few seconds).
+  TypeORM cannot express `UNLOGGED` through decorators, so the integration test database
+  (`test-data-source.ts`, `synchronize: true`) builds it `LOGGED`. Behaviourally
+  invisible — durability and replication only, nothing a test asserts — and the same
+  shape of expected, documented difference as the `@Check` constraint names (Phase 18)
+  and the index DESC/ASC split.
+
+**`throttle_hits` carries no `created_at`/`updated_at`**, and that is consistent with
+§8's convention rather than an exception to it: the convention governs *audit* columns,
+and a disposable counter the next request overwrites has no audit question to answer —
+the same call as the missing `@UpdateDateColumn` on the immutable tables, for the
+opposite reason. `expires_at` is server-set operational state, so `timestamptz`, per the
+`users.locked_until` precedent.
+
+**Race-free, unlike Phase 8's account counter.** `increment` is one
+`INSERT … ON CONFLICT DO UPDATE`; Postgres row-locks the conflicting row, so two
+simultaneous requests for one key serialise and increment to 2, never to 1-and-1. Phase
+8 §1 explicitly accepted a lost-update race on `registerFailedLogin` because a row lock
+was not worth it there; here the atomic upsert removes the race at no extra cost, so
+this store does not carry that caveat.
+
+**`trust proxy` moved from a deployment note to code.** Phase 8 §1 flagged, as "a
+deployment note, not a code change," that `req.ip` is only honest if Express knows
+whether it sits behind a proxy — and that behind an unconfigured load balancer the
+throttle would treat the whole world as one client. Phase 21 makes that load-bearing:
+the whole point is a throttle correct across instances, and multiple instances almost
+always means a load balancer, so a *shared* store keyed on the balancer's one IP would
+be a worse throttle than the per-instance one it replaces. `TRUST_PROXY` (env →
+`configuration.ts` → `app.set('trust proxy', …)` in `main.ts`) is the fix; unset (the
+default) keeps `req.ip` honest for a directly-connected local dev server.
+
+**No FR, no BR** (the Nth of each): BR-079/BR-080 read exactly as before — where the
+throttle keeps its count is not a business rule. **No `domain-model.md` entity**:
+`throttle_hits` is an operational/cache table that models nothing in `product.md`.

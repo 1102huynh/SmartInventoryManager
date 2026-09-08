@@ -7,6 +7,7 @@ import { Category } from '../categories/category.entity';
 import { InventoryTransaction } from '../inventory/inventory-transaction.entity';
 import { Product } from '../products/product.entity';
 import { Supplier } from '../suppliers/supplier.entity';
+import { ThrottleHit } from '../throttler/throttle-hit.entity';
 import { User } from '../users/user.entity';
 
 // TypeOrmModule.forRootAsync, not forRoot: forRoot would need the connection options
@@ -35,6 +36,7 @@ import { User } from '../users/user.entity';
           User,
           AuditEvent,
           AdjustmentRequest,
+          ThrottleHit,
         ],
         // synchronize is intentionally off — see the note in data-source.ts.
         // Schema changes only happen through reviewed migrations.

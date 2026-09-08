@@ -79,7 +79,7 @@ describe('Smart Inventory Manager API (e2e)', () => {
 
   beforeEach(async () => {
     await dataSource.query(
-      'TRUNCATE TABLE inventory_transactions, products, suppliers, users, categories RESTART IDENTITY CASCADE',
+      'TRUNCATE TABLE inventory_transactions, products, suppliers, users, categories, throttle_hits RESTART IDENTITY CASCADE',
     );
     const passwordHash = await bcrypt.hash(TEST_PASSWORD, 10);
     // Phase 5 (docs/phase-5-plan.md §5): this file drives product/supplier writes,

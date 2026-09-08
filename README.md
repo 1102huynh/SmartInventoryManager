@@ -179,7 +179,23 @@ See `docs/learning-notes/ci-and-environments.md`.
 
 ## Current phase
 
-Phase 20 — Remove the `mockFetch` / `?state=` mockup scaffolding (`docs/phase-20-plan.md`,
+Phase 21 — Shared throttle store (`docs/phase-21-plan.md`, issue #11): `@nestjs/throttler`
+counted requests per client address in its default **in-memory `Map`** — correct for one
+process, silently wrong for several (an N-instance deployment would permit N× the
+configured rate, with no error). Phase 21 replaces it with a custom `ThrottlerStorage`
+backed by a `throttle_hits` table in the **same Postgres** as account lockout and
+everything else, so the limits still hold when the API is scaled out. One atomic
+`INSERT … ON CONFLICT DO UPDATE` per throttled request, a fixed window (resets once the
+window lapses), race-free by construction. **Run `npm run migration:run`** to create the
+table. Also promotes Phase 8's "`trust proxy` is a deployment note" to a real
+`TRUST_PROXY` setting (`backend/.env.example`) — behind a load balancer it **must** be
+set, or every request looks like it comes from the balancer and the now-shared throttle
+treats the whole world as one client. No new FR, no new BR, no `domain-model.md` entity;
+one additive migration. Backend suite green (18 unit/integration suites, 7 e2e). See
+`docs/architecture-observations.md`'s Phase 21 section — the first of that file's three
+named unenforced preconditions to be closed rather than carried.
+
+Earlier phases: Phase 20 — Remove the `mockFetch` / `?state=` mockup scaffolding (`docs/phase-20-plan.md`,
 issue #10): deletes the last of Phase 1's navigable-mockup machinery — `UI.mockFetch`,
 `UI.previewControl`, and the per-view `?state=` / `override` handling — that Phase 13 split
 out **unchanged** and explicitly deferred removing (Phase 13 §7's own trigger, now met). Six

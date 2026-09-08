@@ -75,6 +75,11 @@ describe('Auth (e2e)', () => {
     await dataSource.query(
       'TRUNCATE TABLE inventory_transactions, products, suppliers, users, categories RESTART IDENTITY CASCADE',
     );
+    // Phase 21 (docs/phase-21-plan.md §5): the throttle count now lives in Postgres,
+    // shared across every app instance and every spec in this run and keyed on the
+    // one client address (127.0.0.1). Truncating it here is what gives each test a
+    // clean slate — the thing "a fresh app = a fresh in-memory Map" used to do.
+    await dataSource.query('TRUNCATE TABLE throttle_hits');
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const [staff] = await dataSource.query(
       `INSERT INTO users (name, role, email, password_hash) VALUES ('Auth Test User', 'staff', 'auth-test@example.com', $1) RETURNING id`,
@@ -308,55 +313,53 @@ describe('Auth (e2e)', () => {
     });
   });
 
-  // ---------------------------------------------------------- Phase 8: rate limiting --
-  // A separate, isolated NestJS application instance PER TEST (and therefore a
-  // separate, EMPTY in-memory throttle counter for POST /auth/login each time) so
-  // each test's low limit is exercised on a genuinely clean slate — not just
-  // independent of the tests above, but independent of each OTHER too. Without a
-  // fresh app per test, a test later in this block would inherit however many hits
-  // an earlier one already logged against the same in-process counter, and "N wrong
-  // guesses reach the limit" would describe leftover state, not what that test
-  // actually did. THROTTLE_LOGIN_LIMIT is read live, per request (see
-  // AuthController's loginThrottleLimit()), which is what lets this block lower it
-  // at all, on an app it creates itself.
+  // ------------------------------------- Phase 8: rate limiting (Phase 21: shared) --
+  // A fresh NestJS application instance PER TEST, at a deliberately low
+  // THROTTLE_LOGIN_LIMIT. THROTTLE_LOGIN_LIMIT is read live, per request (see
+  // AuthController's loginThrottleLimit()), which is what lets this block lower it at
+  // all, on apps it creates itself.
+  //
+  // Phase 21 (docs/phase-21-plan.md §5): the throttle count is now a shared row in
+  // Postgres, not a per-process Map, so a fresh app no longer resets anything. What
+  // isolates each test is the outer describe's `beforeEach`, which now also does
+  // `TRUNCATE TABLE throttle_hits` (Jest composes ancestor hooks, so it runs for
+  // every test nested here). It also seeds 'auth-test@example.com', so this block
+  // needs neither its own seeding nor, strictly, its own app — but a fresh app per
+  // test keeps each one's lifecycle clean and gives the cross-instance test below a
+  // second instance to build against.
   describe('rate limiting on POST /auth/login', () => {
     let throttleApp: INestApplication;
     const ORIGINAL_LIMIT = process.env.THROTTLE_LOGIN_LIMIT;
 
-    // beforeEach/afterEach, not beforeAll/afterAll — a fresh app (and therefore a
-    // fresh, empty in-memory throttle counter) for EACH test in this block, not just
-    // once for the whole block. Without this, the second test's "three wrong
-    // guesses reach the limit" would really be "the bucket left over from the first
-    // test's five requests was already past the limit" — true by accident, and the
-    // comment would be describing a scenario that isn't what's actually running.
-    beforeEach(async () => {
-      process.env.THROTTLE_LOGIN_LIMIT = '3';
+    async function buildThrottleApp(): Promise<INestApplication> {
       const moduleRef = await Test.createTestingModule({
         imports: [AppModule],
       }).compile();
-      throttleApp = moduleRef.createNestApplication();
-      throttleApp.useGlobalPipes(
+      const built = moduleRef.createNestApplication();
+      built.useGlobalPipes(
         new ValidationPipe({
           whitelist: true,
           forbidNonWhitelisted: true,
           transform: true,
         }),
       );
-      throttleApp.useGlobalFilters(new AllExceptionsFilter());
-      throttleApp.useGlobalInterceptors(
-        new ClassSerializerInterceptor(throttleApp.get(Reflector)),
+      built.useGlobalFilters(new AllExceptionsFilter());
+      built.useGlobalInterceptors(
+        new ClassSerializerInterceptor(built.get(Reflector)),
       );
-      await throttleApp.init();
+      await built.init();
+      return built;
+    }
+
+    beforeEach(async () => {
+      process.env.THROTTLE_LOGIN_LIMIT = '3';
+      throttleApp = await buildThrottleApp();
     });
 
     afterEach(async () => {
       await throttleApp.close();
       process.env.THROTTLE_LOGIN_LIMIT = ORIGINAL_LIMIT;
     });
-
-    // The outer describe's beforeEach still runs for tests nested in here (Jest
-    // composes ancestor hooks), so 'auth-test@example.com' already exists — this
-    // block only needed its own app instance, not its own seeding.
 
     it('returns 429 with the documented error shape and a Retry-After header once the limit is exceeded', async () => {
       let last: request.Response | undefined;
@@ -390,6 +393,32 @@ describe('Auth (e2e)', () => {
         .post('/auth/login')
         .send({ email: 'auth-test@example.com', password: PASSWORD });
       expect(res.status).toBe(429);
+    });
+
+    // Phase 21 (docs/phase-21-plan.md §5), the headline behaviour and the reason the
+    // phase exists: exhausting the limit through ONE app instance makes a second,
+    // independent instance — same database, no shared process memory — reject the
+    // very next request from the same client. With the default in-memory Map store,
+    // instance B would happily let it through. This is the change-test counterpart to
+    // Phase 8's "a locked account's token still works" non-change test.
+    it('the limit is shared across instances — exhausting it via app A blocks app B', async () => {
+      const appB = await buildThrottleApp();
+      try {
+        for (let i = 0; i < 4; i++) {
+          await request(throttleApp.getHttpServer()).post('/auth/login').send({
+            email: 'auth-test@example.com',
+            password: 'wrong-password',
+          });
+        }
+        // appB has counted zero requests of its own; the shared Postgres row is
+        // already over the limit, so even a correct password is rejected here.
+        const viaB = await request(appB.getHttpServer())
+          .post('/auth/login')
+          .send({ email: 'auth-test@example.com', password: PASSWORD });
+        expect(viaB.status).toBe(429);
+      } finally {
+        await appB.close();
+      }
     });
   });
 });

@@ -6,6 +6,7 @@ import { Category } from '../categories/category.entity';
 import { InventoryTransaction } from '../inventory/inventory-transaction.entity';
 import { Product } from '../products/product.entity';
 import { Supplier } from '../suppliers/supplier.entity';
+import { ThrottleHit } from '../throttler/throttle-hit.entity';
 import { User } from '../users/user.entity';
 
 // This file is used ONLY by the TypeORM CLI (`npm run migration:*`), never imported
@@ -29,6 +30,7 @@ export const AppDataSource = new DataSource({
     User,
     AuditEvent,
     AdjustmentRequest,
+    ThrottleHit,
   ],
   migrations: ['src/database/migrations/*.ts'],
   synchronize: false,

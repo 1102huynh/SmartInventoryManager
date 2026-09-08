@@ -381,6 +381,16 @@ wording and behaviour; only the review-only control that forced them without a b
 gone, and each screen now chooses its "nothing yet" vs. "no matches" copy from whether a
 filter is actually active.
 
+**[2026-09-08, Phase 21]** No new BR — the tenth such line. `docs/phase-21-plan.md`
+(issue #11) gives `@nestjs/throttler` a shared, Postgres-backed store (`throttle_hits`,
+a custom `ThrottlerStorage`) in place of its default per-process `Map`, so the limits
+BR-079 describes still hold when the API runs as more than one instance. It **reaffirms**
+BR-079–081 rather than touching them: the rules say authentication attempts are
+rate-limited per client address and repeated failures lock an account — *where the
+throttle keeps its count* is an implementation fact, not a rule. Account lockout
+(`users.failed_login_attempts`/`locked_until`) was already Postgres-backed and is
+unchanged; this closes the gap the throttle side carried.
+
 ## Adjustment Approval
 
 - **BR-085** [Decided 2026-09-03, Phase 12] — **A Staff-initiated adjustment is a

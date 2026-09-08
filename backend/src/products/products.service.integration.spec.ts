@@ -13,12 +13,13 @@ import { Category } from '../categories/category.entity';
 import { Product } from './product.entity';
 import { ProductsService, ProductWithStock } from './products.service';
 
-// INTEGRATION, not unit: Phase 14's Fork B moves current-stock and `hasHistory` INTO
-// `findAll`'s query (a grouped subquery join), and turns `?status=low`/`out` from a
-// post-fetch `.filter()` into real WHERE conditions. A mock repository cannot prove
-// the SQL is right — that the join sums the deltas, that the paged `low` set is the
-// low-stock rows and not "the first pageSize by name, then filtered", that `total`
-// counts the filtered set. Only a real database can.
+// INTEGRATION, not unit: Phase 14's Fork B turned `?status=low`/`out` from a
+// post-fetch `.filter()` into real WHERE conditions over current stock. Phase 23
+// (docs/phase-23-plan.md §1 Fork C) makes current stock a materialised column, so the
+// filters read `product.current_stock` directly and `hasHistory` is a correlated
+// `EXISTS`. A mock repository cannot prove the SQL is right — that the paged `low` set
+// is the low-stock rows and not "the first pageSize by name, then filtered", that
+// `total` counts the filtered set. Only a real database can.
 //
 // Requires the local Postgres from tools/ to be running (see tools/README.md).
 describe('ProductsService.findAll (integration, Phase 14)', () => {
@@ -94,6 +95,16 @@ describe('ProductsService.findAll (integration, Phase 14)', () => {
         })),
       );
     }
+    // Phase 23: these fixtures insert transactions directly, not through the locking
+    // write path, so nothing has maintained products.current_stock. Recompute it from
+    // history here — the exact expression the migration backfill, run-seed.ts, and
+    // InventoryService.rewriteCurrentStock use.
+    await dataSource.query(
+      `UPDATE products SET current_stock = COALESCE(
+         (SELECT SUM(quantity_delta) FROM inventory_transactions WHERE product_id = $1), 0)
+       WHERE id = $1`,
+      [product.id],
+    );
     return product;
   }
 
@@ -198,6 +209,18 @@ describe('ProductsService.findAll (integration, Phase 14)', () => {
       expect(low.map((r) => r.name)).toEqual(['Beacon', 'Cable', 'Ember']);
       const out = asArray(await service.findAll({ status: 'out' }));
       expect(out.map((r) => r.name)).toEqual(['Cable', 'Dowel']);
+    });
+
+    // Phase 23: pins the `<=` boundary of the materialised-column filter — a product
+    // sitting exactly on its threshold is low, one unit above it is not.
+    it('a product whose stock exactly equals its threshold is low; one above is not', async () => {
+      await makeProduct({ sku: 'F', name: 'Flush', threshold: 10, stock: 10 });
+      await makeProduct({ sku: 'G', name: 'Gap', threshold: 10, stock: 11 });
+      const low = asArray(await service.findAll({ status: 'low' })).map(
+        (r) => r.name,
+      );
+      expect(low).toContain('Flush');
+      expect(low).not.toContain('Gap');
     });
 
     it('filters by categoryId', async () => {

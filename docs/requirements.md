@@ -280,6 +280,20 @@ relationship to its own records, not an implementation detail. No new table, no
 migration, no schema change (the prune reuses Phase 9's `created_at` index), no
 `domain-model.md` entity, no route or response change.
 
+## Current Stock Materialisation (Phase 23 — no new FR)
+
+Phase 23 (`docs/phase-23-plan.md`, issue #13) stores current stock as
+`products.current_stock` instead of summing `inventory_transactions` on every catalogue
+and dashboard read; `InventoryService.insertTransaction` rewrites the column from the
+product's full history on every stock write, under the row lock BR-041 already uses.
+The thirteenth "no new FR" note: **FR-023/FR-024 (view current stock) read exactly as
+before** — the number means what BR-040 always said, it is just served from a column
+now. Like Phases 18 and 22, this one *does* touch `business-rules.md` (BR-043 added,
+BR-042 amended to name the stored column and the recompute-on-write mechanism): how the
+system guarantees the stored figure still replays from history is a statement about the
+business's relationship to its own numbers. One additive migration (`ADD COLUMN` +
+backfill); no new table, no `domain-model.md` entity, no route or response-shape change.
+
 ## Cross-Reference Summary
 
 ```
@@ -288,7 +302,7 @@ FR-021 (stock-out)     → BR-020, BR-021, BR-022         → Inventory Transact
 FR-025 (stock-out reason category) → BR-023             → Inventory Transaction
 FR-022 (adjustment)    → BR-030–BR-034; BR-072 (amended), BR-085–089 → Inventory Transaction / Adjustment Request
 FR-066 (adjustment approval) → BR-072 (amended), BR-085, BR-086, BR-087, BR-088, BR-089 → Adjustment Request
-FR-023/024 (current stock) → BR-040, BR-041, BR-042     → Product / Inventory Transaction
+FR-023/024 (current stock) → BR-040, BR-041, BR-042, BR-043 → Product (materialised current_stock) / Inventory Transaction
 FR-030/031 (history)   → BR-050, BR-051                 → Inventory Transaction
 FR-040/041/042 (low stock) → BR-060, BR-061              → Product
 ```

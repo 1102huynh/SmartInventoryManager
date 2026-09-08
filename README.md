@@ -179,20 +179,39 @@ See `docs/learning-notes/ci-and-environments.md`.
 
 ## Current phase
 
-Phase 22 — `audit_events` retention (`docs/phase-22-plan.md`, issue #12): `audit_events`
-grew without bound — every login attempt, anonymous ones included, writes a row, and
-Phase 9 capped only the *read* (`GET /audit-events`), deferring a policy for the *table*
-to §7 with a concrete trigger ("a slow audit screen, or a backup size that surprises
-someone"). That trigger is now met. Phase 22 bounds the table to a **rolling one-year
-window**: rows older than a year are deleted by an **opportunistic probabilistic sweep**
-on `AuditService.record()` (the 1-in-1000 mechanism Phase 21 gave `throttle_hits`) plus
-one unconditional pass at startup — **no scheduler, no `@nestjs/schedule`, no new
-dependency, no migration, no schema change** (the prune reuses Phase 9's `created_at`
-index). The prune is best-effort, like the write it guards (BR-082): a failed `DELETE`
-is logged and swallowed. Events past a year are permanently discarded — expected, not
-data loss (BR-090). `BR-082` is amended (rows are no longer "never deleted") and
-`BR-090` added; one "no new FR" note. Backend suite green (19 unit/integration suites,
-7 e2e). See `docs/architecture-observations.md`'s Phase 22 section.
+Phase 23 — Materialise `products.current_stock` (`docs/phase-23-plan.md`, issue #13):
+current stock was a `SUM(quantity_delta)` over `inventory_transactions` computed on
+every `GET /products` and every dashboard load (Phase 14 Fork B / Phase 19 moved the
+`SUM` into the products query but did not store it). That table only ever grows — it is
+business history (BR-050/BR-051) and, unlike `audit_events` (Phase 22), cannot be
+pruned — so the aggregate got slower with the age of the business, the last instance of
+the shape Phase 22 acted on. Phase 23 stores it as `products.current_stock`, backfilled
+by migration and **rewritten from the product's full history on every stock write**
+(`InventoryService.insertTransaction`), inside the pessimistic product-row lock the
+write already holds (BR-041). Never patched incrementally, so BR-042 ("current stock
+always replays from history") holds by construction; the column self-heals on the next
+write if a bug ever leaves it wrong (BR-043). `ProductsService.findAll` / `findOne`,
+`DashboardService.getSummary`, and `AdjustmentsService`'s stock reads all read the
+column; the `joinCurrentStock` helper is deleted; `hasHistory` becomes a correlated
+`EXISTS`. `BR-042` amended and `BR-043` added; one "no new FR" note. **Run
+`npm run migration:run`** (`DB_DATABASE=smart_inventory_e2e` too, before the e2e suite).
+Backend suite green (20 unit/integration suites, 7 e2e). See
+`docs/architecture-observations.md`'s Phase 23 section.
+
+Earlier phases: Phase 22 — `audit_events` retention (`docs/phase-22-plan.md`, issue
+#12): `audit_events` grew without bound — every login attempt, anonymous ones included,
+writes a row, and Phase 9 capped only the *read* (`GET /audit-events`), deferring a
+policy for the *table* to §7 with a concrete trigger ("a slow audit screen, or a backup
+size that surprises someone"). That trigger is now met. Phase 22 bounds the table to a
+**rolling one-year window**: rows older than a year are deleted by an **opportunistic
+probabilistic sweep** on `AuditService.record()` (the 1-in-1000 mechanism Phase 21 gave
+`throttle_hits`) plus one unconditional pass at startup — **no scheduler, no
+`@nestjs/schedule`, no new dependency, no migration, no schema change** (the prune
+reuses Phase 9's `created_at` index). The prune is best-effort, like the write it guards
+(BR-082): a failed `DELETE` is logged and swallowed. Events past a year are permanently
+discarded — expected, not data loss (BR-090). `BR-082` is amended (rows are no longer
+"never deleted") and `BR-090` added; one "no new FR" note. See
+`docs/architecture-observations.md`'s Phase 22 section.
 
 Earlier phases: Phase 21 — Shared throttle store (`docs/phase-21-plan.md`, issue #11):
 `@nestjs/throttler` counted requests per client address in its default **in-memory

@@ -13,12 +13,15 @@ import { Category } from '../categories/category.entity';
 import { EntityStatus } from '../common/enums/entity-status.enum';
 import { InventoryTransaction } from '../inventory/inventory-transaction.entity';
 
-// Note what's deliberately *not* here: a `currentStock` column. domain-model.md is
-// explicit that current stock is a derived projection of a product's transactions,
-// not an owned field — storing it here would create two sources of truth that BR-042
-// says can never diverge. InventoryService computes it on demand instead (see
-// docs/learning-notes/database-transactions.md for how writes stay consistent with
-// that without a stored column).
+// `currentStock` is a stored column as of Phase 23 (docs/phase-23-plan.md, issue #13)
+// — a *materialisation* of `SUM(quantity_delta)` over the product's
+// `inventory_transactions`, not an independently editable field. It exists so the
+// Product List and dashboard reads stop aggregating the whole (unprunable) transaction
+// history on every request. BR-042 still holds — "current stock always replays from
+// history" — because `InventoryService.insertTransaction` *recomputes* this column
+// from that history on every stock write, inside the pessimistic product-row lock the
+// write already holds (BR-043). It is never patched incrementally and no read trusts
+// it without that guarantee. See docs/learning-notes/database-transactions.md.
 @Entity('products')
 export class Product {
   @PrimaryGeneratedColumn()
@@ -53,6 +56,13 @@ export class Product {
 
   @Column({ type: 'enum', enum: EntityStatus, default: EntityStatus.ACTIVE })
   status: EntityStatus;
+
+  // Phase 23: materialised current stock — SUM(quantity_delta) over this product's
+  // inventory_transactions, kept equal to a fresh replay by the write-path invariant
+  // (BR-042/BR-043). See the class comment above. Non-null; a product with no
+  // transactions is at 0, not "unknown".
+  @Column({ name: 'current_stock', type: 'int', default: 0 })
+  currentStock: number;
 
   @OneToMany(() => InventoryTransaction, (tx) => tx.product)
   transactions: InventoryTransaction[];

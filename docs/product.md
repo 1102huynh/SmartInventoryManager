@@ -326,3 +326,17 @@ These affect the UI mockup and should be resolved before or during that phase.
   is immutable-in-shape but no longer retained forever). It is the retention policy
   Phase 9 §7 deferred by name, its trigger now met. Q-7 (multi-location) remains open,
   untouched since Phase 5.
+- **[Added 2026-09-08, Phase 23]** Materialise `products.current_stock`
+  (`docs/phase-23-plan.md`, issue #13, `requirements.md`'s Phase 23 note,
+  `business-rules.md` BR-043 with BR-042 amended, `docs/architecture-observations.md`'s
+  Phase 23 section). Same shape as the Phase 7, 10, 11, 14–17, and 19–21 entries, not
+  Phase 9's, 12's, or 18's: §4 gains no user goal, §5 no use case, §7 no scope —
+  storing current stock as a column that every stock write rewrites from history is a
+  read-performance change a user never sees; `currentStock` on `GET /products` and the
+  dashboard reads exactly as before, same value, same shape. One additive migration
+  (`ADD COLUMN` + backfill), no `domain-model.md` entity (though §4/§5/§6/§8 are
+  updated: current stock is materialised now, still a projection of the transaction
+  history, not an editable field). It is the materialisation Phase 11 §7 deferred by
+  name and Phase 14 Fork B / Phase 19 re-parked, acted on now that Phase 22 closed the
+  same shape for `audit_events`. Q-7 (multi-location) remains open, untouched since
+  Phase 5.

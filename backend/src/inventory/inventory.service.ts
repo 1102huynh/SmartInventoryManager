@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { daysCutoffForDateColumn } from '../common/days-cutoff';
 import { EntityStatus } from '../common/enums/entity-status.enum';
 import { StockOutReason } from '../common/enums/stock-out-reason.enum';
@@ -54,32 +54,30 @@ export class InventoryService {
 
   // ---------------------------------------------------------------- Reads --
 
-  // BR-040: current stock is SUM(quantity_delta) for the product, computed on demand
-  // — never a stored column (see the comment on Product.currentStock's absence).
-  // COALESCE handles a product with zero transactions, where SUM() would otherwise
-  // return SQL NULL instead of 0.
+  // BR-040: current stock is the net of a product's transactions. Phase 23
+  // (docs/phase-23-plan.md §1 Fork C): this now reads the materialised
+  // `products.current_stock` column instead of summing `inventory_transactions` on
+  // demand — the write path keeps that column equal to a fresh replay of history
+  // (BR-042/BR-043, see `rewriteCurrentStock`). A product with no row, or no
+  // transactions, reads 0.
   async getCurrentStock(productId: number): Promise<number> {
-    const raw = await this.transactionsRepository
-      .createQueryBuilder('tx')
-      .select('COALESCE(SUM(tx.quantityDelta), 0)', 'sum')
-      .where('tx.productId = :productId', { productId })
-      .getRawOne<{ sum: string }>();
-    return parseInt(raw?.sum ?? '0', 10);
+    const product = await this.dataSource
+      .getRepository(Product)
+      .findOne({ where: { id: productId }, select: { currentStock: true } });
+    return product?.currentStock ?? 0;
   }
 
-  // Used by ProductsService.findAll to avoid an N+1 query (one aggregate per product)
-  // when listing many products — one GROUP BY query instead, then an in-memory lookup.
+  // Batched form of getCurrentStock — used by AdjustmentsService to attach current
+  // stock to a list of pending requests in one query. Phase 23: reads the column, so
+  // a pending request's "current stock" preview matches the Product List exactly.
   async getCurrentStockMap(productIds: number[]): Promise<Map<number, number>> {
     if (productIds.length === 0) return new Map();
-    const rows = await this.transactionsRepository
-      .createQueryBuilder('tx')
-      .select('tx.productId', 'productId')
-      .addSelect('SUM(tx.quantityDelta)', 'sum')
-      .where('tx.productId IN (:...productIds)', { productIds })
-      .groupBy('tx.productId')
-      .getRawMany<{ productId: number; sum: string }>();
+    const products = await this.dataSource.getRepository(Product).find({
+      where: { id: In(productIds) },
+      select: { id: true, currentStock: true },
+    });
     const map = new Map(productIds.map((id) => [id, 0]));
-    rows.forEach((row) => map.set(row.productId, parseInt(row.sum, 10)));
+    products.forEach((p) => map.set(p.id, p.currentStock));
     return map;
   }
 
@@ -178,14 +176,18 @@ export class InventoryService {
   //      = 10" and both deciding an 8-unit stock-out is safe, overselling to -6.
   //      A second concurrent request simply waits for the lock, then sees the
   //      first request's committed change before it reads current stock itself.
-  //   3. Compute current stock *inside* that same transaction/lock.
+  //   3. Compute current stock *inside* that same transaction/lock (from history —
+  //      `getCurrentStockLocked`; stock-in skips this, it has no ceiling to check).
   //   4. Validate the business rule against that number.
-  //   5. Insert the new transaction row.
+  //   5. Insert the new transaction row, then (Phase 23) recompute the product's
+  //      stored `current_stock` from history — `insertTransaction` does both.
   //   6. Commit — releasing the lock.
   //
   // Application-layer validation alone (read stock, check in JS, then write) cannot
   // prevent the race above; only a database-level lock held for the duration of the
-  // check-and-write can. See docs/learning-notes/database-transactions.md.
+  // check-and-write can. See docs/learning-notes/database-transactions.md. The Phase
+  // 23 `current_stock` rewrite rides the same lock, so it needs no new concurrency
+  // story — a second writer's recompute waits, then sees the first's committed row.
 
   async recordStockIn(
     productId: number,
@@ -384,7 +386,7 @@ export class InventoryService {
     }
   }
 
-  private insertTransaction(
+  private async insertTransaction(
     manager: EntityManager,
     values: {
       productId: number;
@@ -408,7 +410,40 @@ export class InventoryService {
       reason: values.reason,
       reasonCategory: values.reasonCategory,
     });
-    return repo.save(record);
+    const saved = await repo.save(record);
+    await this.rewriteCurrentStock(manager, values.productId);
+    return saved;
+  }
+
+  // Phase 23 (docs/phase-23-plan.md §1). Rewrites products.current_stock from the
+  // product's FULL transaction history — never `+= delta`. This runs in the caller's
+  // transaction, after the new row is inserted, and every write path reaches it
+  // through `insertTransaction`, so the materialised column is recomputed from history
+  // on every stock movement. The caller already holds a `pessimistic_write` lock on
+  // this product row (getLockedActiveProduct / the findOne lock in
+  // applyApprovedAdjustment), which is what serialises concurrent writers — the same
+  // lock BR-041 depends on (docs/learning-notes/database-transactions.md). Because the
+  // only writer replays history, BR-042 ("current stock always reproducible by
+  // replaying the full history") holds by construction, and the stored value self-
+  // heals on the next write if it is ever left wrong (BR-043).
+  //
+  // A raw, targeted UPDATE — deliberately not `repository.update`, so it does NOT bump
+  // `products.updated_at`. That column means "someone edited this product's own
+  // attributes" (name, SKU, threshold, status); a stock movement is history on
+  // `inventory_transactions`, and letting every stock-in touch the product's
+  // `updated_at` would blur that (domain-model.md §8, Phase 23 note).
+  private async rewriteCurrentStock(
+    manager: EntityManager,
+    productId: number,
+  ): Promise<void> {
+    await manager.query(
+      `UPDATE "products"
+          SET "current_stock" = COALESCE(
+            (SELECT SUM("quantity_delta") FROM "inventory_transactions"
+              WHERE "product_id" = $1), 0)
+        WHERE "id" = $1`,
+      [productId],
+    );
   }
 
   // Public since Phase 12: AdjustmentsService calls this to enforce BR-052 when a

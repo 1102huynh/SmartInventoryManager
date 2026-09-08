@@ -951,3 +951,62 @@ migration, no schema change**: the prune reuses `IDX_audit_events_created_at` fr
 one-year window is a constant, the deliberate inverse of Phase 21's `TRUST_PROXY`
 addition and consistent with Phase 9 §1's "the cap is a constant, not configuration"
 call for this feature's sibling number.
+
+## Cross-cutting: current stock stops being a read-time SUM (Phase 23)
+
+Phase 23 (`docs/phase-23-plan.md`, issue #13) stores current stock as
+`products.current_stock` and has `InventoryService.insertTransaction` rewrite it — from
+the product's full `inventory_transactions` history, never `+= delta` — on every stock
+write, inside the pessimistic product-row lock that already serialises writers (BR-041).
+`ProductsService.findAll`, `ProductsService.findOne`, `DashboardService.getSummary`, and
+`AdjustmentsService`'s stock reads all read the column now; the `joinCurrentStock`
+grouped-subquery helper (Phase 19's careful single-copy extraction) is **deleted**.
+
+**This closes the Phase 22 "cost is a function of how long the business has run" shape
+for its last instance.** Phase 22's own section, and the Phase 9/11 sections it built
+on, sharpened `audit_events`' retention argument into a general one: *a read whose cost
+grows with the age of the business is unbounded, regardless of which mechanism does the
+growing.* Phase 22 fixed that for `audit_events` by **pruning the table** and, in its
+§7, named `inventory_transactions` as the table where that fix is unavailable — it is
+business history (BR-050/BR-051), kept for good. Every `GET /products` and every
+dashboard load ran a `SUM(quantity_delta) … GROUP BY product_id` over that whole,
+ever-growing table (Phase 14 Fork B's subquery has no per-product filter). The only
+remaining move for an unprunable table under an aggregate is to take the aggregate off
+the read path — which is exactly what Phase 11 §7 parked ("materialising current stock …
+later, for a measured reason") and Phase 14 Fork B / Phase 19 re-parked. "Phase 22 just
+did this for the table next door and pointed here" is the measured reason.
+
+**A shared read fragment has a life-cycle, and deleting it one phase later is that
+life-cycle, not churn.** Phase 19's section argued at length for extracting
+`joinCurrentStock` rather than copying the SUM a third time (`DashboardService` wanted
+the *identical* query `findAll` ran). Phase 23 removes the need for the SUM in reads at
+all, so the helper's three callers move to the column and the helper goes. The Phase 19
+reasoning was right for Phase 19; a helper that exists to write one query once is
+correctly deleted when no read needs that query. `hasHistory` — which rode the same
+grouped join in `findAll` — becomes a correlated `EXISTS`, cheaper than the `SUM … GROUP
+BY` it replaces, so `findAll` stays a single query.
+
+**The write path gains its first recompute-from-history maintenance step — the deliberate
+opposite of the Phases 21/22 background sweeps.** Those are best-effort, probabilistic,
+un-`await`ed, and tolerate being skipped. This one is synchronous, transactional, under
+the lock, and exact: BR-042 ("current stock always replays from history") holds *by
+construction* because the only writer of the column replays history to write it. Drift
+is not unlikely — it is unrepresentable short of a bug in one `UPDATE`, and the next
+write for that product heals it anyway. So there is no reconcile sweep (nothing to
+reconcile); a single integration test (`current-stock.integration.spec.ts`) pins the
+invariant, the analogue of the concurrent-stock-out test that pins BR-041. The raw
+`UPDATE` is targeted and does **not** bump `products.updated_at` — that column keeps its
+"someone edited this product's attributes" meaning; a stock movement is history on
+`inventory_transactions`.
+
+**One migration, additive.** `ADD COLUMN current_stock integer NOT NULL DEFAULT 0` plus
+a one-shot backfill (`SUM(quantity_delta)` per product) — the fifth migration since
+Phase 12, after Phase 18's and Phase 21's. The Phase 19 section's "a `SUM` in a query is
+not a stored column; BR-040/042's 'current stock replays from history, never cached' is
+reaffirmed, not bent" is left as written — true at Phase 19 — and superseded here: it is
+a stored column now, and BR-043 is the invariant that keeps 042 true anyway. **One new
+BR** (BR-043) with BR-042 amended — "current stock is now materialised, and here is what
+guarantees it still replays from history" is a statement about the business's
+relationship to its own numbers, the same reason BR-090 was a rule and the throttle
+store was not. **No new FR** (the thirteenth such note): reading a number that means
+what BR-040 always said is still FR-023/FR-024.

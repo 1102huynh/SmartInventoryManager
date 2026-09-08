@@ -3,7 +3,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { EntityStatus } from '../common/enums/entity-status.enum';
 import { InventoryService } from '../inventory/inventory.service';
-import { joinCurrentStock } from '../inventory/stock-aggregate.query';
 import { Product } from '../products/product.entity';
 
 @Injectable()
@@ -18,32 +17,21 @@ export class DashboardService {
   // it does not introduce any new data of its own, matching the domain model's framing
   // of the dashboard as a pure read-side composition, not a fourth domain.
   async getSummary() {
-    // Phase 19 (docs/phase-19-plan.md §1): current stock per product is computed in
-    // this one query — the same grouped-subquery join `ProductsService.findAll` uses
-    // (Phase 14 Fork B), shared via `joinCurrentStock` — replacing the separate
-    // `productsRepository.find()` + `inventoryService.getCurrentStockMap()` round-
-    // trips this method used to make. The whole-catalogue read stays: a summary that
-    // reports `lowStockCount` inherently needs every product, so it is not a paging
-    // problem (Phase 14 §7 names this follow-on explicitly).
+    // Phase 19 (docs/phase-19-plan.md §1) collapsed this method's two round-trips
+    // (`productsRepository.find()` + `inventoryService.getCurrentStockMap()`) into one
+    // query with a grouped-subquery `SUM`. Phase 23 (docs/phase-23-plan.md §1 Fork C):
+    // that `SUM` is a stored column now, so this is a plain `find()` again — the
+    // `joinCurrentStock` helper and the `getRawAndEntities` / `raw[i]` alignment are
+    // gone. The whole-catalogue read stays: a summary that reports `lowStockCount`
+    // inherently needs every product, so it is not a paging problem (Phase 14 §7).
     //
-    // `ORDER BY product.name ASC` is new. The old `find()` had no ORDER BY, so which
-    // five products landed in `needsAttention` when more than five were low-stock was
-    // whatever order the executor happened to produce — not guaranteed. Ordering by
-    // name makes it deterministic and matches `findAll`. Same kind of determinism
-    // improvement Phase 11 made for `recentActivity` (see the note below).
-    const { entities, raw } = await joinCurrentStock(
-      this.productsRepository.createQueryBuilder('product'),
-    )
-      .orderBy('product.name', 'ASC')
-      .getRawAndEntities<{ currentStock: string | number | null }>();
-
-    // `currentStock` comes back from `pg` as a numeric string (COALESCE over a
-    // bigint SUM); align it onto each entity by index, as `findAll`'s `mergeStock`
-    // does.
-    const products = entities.map((product, i) => ({
-      ...product,
-      currentStock: Number(raw[i]?.currentStock ?? 0),
-    }));
+    // `ORDER BY name ASC` is kept (added in Phase 19): without it, which five products
+    // land in `needsAttention` when more than five are low-stock is whatever order the
+    // executor produces. Ordering by name makes it deterministic and matches `findAll`
+    // — the same determinism improvement Phase 11 made for `recentActivity`.
+    const products = await this.productsRepository.find({
+      order: { name: 'ASC' },
+    });
 
     const activeProducts = products.filter(
       (p) => p.status === EntityStatus.ACTIVE,

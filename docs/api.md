@@ -1,6 +1,6 @@
-# API Documentation — Phase 22
+# API Documentation — Phase 23
 
-Status: Phase 22 — `audit_events` retention prune (no route or shape change)
+Status: Phase 23 — `products.current_stock` materialised (no route or response-shape change)
 Base URL: `http://localhost:3000` (see `backend/.env.example`)
 
 Every resource response includes `createdAt` (an ISO timestamp, server-set, never
@@ -152,7 +152,7 @@ unbounded-read note is retired for the first two and survives on that one path �
 
 | Method | Path | Body / Query | Notes |
 |---|---|---|---|
-| GET | `/products` | `?search=&status=active\|inactive\|low\|out&categoryId=&page=&pageSize=` | Response items include computed `currentStock`, `lowStock`, `outOfStock`, `hasHistory`. **Optional paging (Phase 14):** with `page` or `pageSize`, `{ items, page, pageSize, total }` (each item carries the same computed fields); with neither, the bare array. `status=low`/`out` is a SQL `WHERE` condition now (current stock is computed in the query), so `?status=low&page=…` pages the low-stock set — not the first `pageSize` by name then filtered. **Phase 17:** the History screen's product filter is now a typeahead sending `?search=&pageSize=20`; the category screen's product-count read is gone (server-side `productCount` on `/categories` instead). No caller now requests the whole product list. |
+| GET | `/products` | `?search=&status=active\|inactive\|low\|out&categoryId=&page=&pageSize=` | Response items include `currentStock`, `lowStock`, `outOfStock`, `hasHistory`. **Optional paging (Phase 14):** with `page` or `pageSize`, `{ items, page, pageSize, total }` (each item carries the same fields); with neither, the bare array. `status=low`/`out` is a SQL `WHERE` condition, so `?status=low&page=…` pages the low-stock set — not the first `pageSize` by name then filtered. **Phase 23:** `currentStock` is served from a stored `products.current_stock` column (materialised, rewritten from transaction history on every stock write), not summed per request — same value, same shape, no contract change. **Phase 17:** the History screen's product filter is a typeahead sending `?search=&pageSize=20`; the category screen's product-count read is gone (server-side `productCount` on `/categories`). No caller now requests the whole product list. |
 | GET | `/products/:id` | | 404 if missing |
 | POST | `/products` | `{ name, sku, unit, categoryId?, lowStockThreshold? }` | **Owner only.** 409 on duplicate SKU |
 | PATCH | `/products/:id` | `{ name, unit, categoryId?, lowStockThreshold?, sku? }` | **Owner only.** `sku` change rejected (409) once the product has any transaction history (BR-001) |

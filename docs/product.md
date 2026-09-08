@@ -351,3 +351,14 @@ These affect the UI mockup and should be resolved before or during that phase.
   code** — the first entry here whose deliverable is only a decision; it discharges the
   conditional Phases 11 §7, 14 §7, and 23 §7 each carried. Q-7 (multi-location) remains
   open, untouched since Phase 5.
+- **[Added 2026-09-08, Phase 25]** Promote `no-floating-promises` / `no-unsafe-argument`
+  from `warn` to `error` (`docs/phase-25-plan.md`, issue #15, `requirements.md`'s Phase
+  25 note, `business-rules.md`'s Phase 25 line,
+  `docs/architecture-observations.md`'s Phase 15/16 CI section, extended). Same shape as
+  the Phase 15 and Phase 16 entries — an engineering-practice change: two lint rules in
+  `backend/eslint.config.mjs` go to `error`, catching the config up to a discipline the
+  tree already follows (the committed tree passes both; the call-site set Phase 16 §7
+  anticipated is empty). §4/§5/§7 unchanged; no application behaviour, no migration, no
+  schema change, no `domain-model.md` change. It discharges the Phase 16 §7 line that
+  named this promotion by hand. Q-4 was resolved in Phase 18; Q-7 (multi-location)
+  remains open, untouched since Phase 5.

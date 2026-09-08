@@ -446,6 +446,14 @@ read is backed by an index is an implementation fact about performance, not a ru
 the business — the same reason the Phase 21 shared-throttle-store change filed a "no new
 BR" line. No BR is touched, reaffirmed, or amended; no schema changes.
 
+**[2026-09-08, Phase 25]** No new BR — the twelfth such line. `docs/phase-25-plan.md`
+(issue #15) promotes `@typescript-eslint/no-floating-promises` and `no-unsafe-argument`
+from `warn` to `error` in `backend/eslint.config.mjs`. How strictly the build checks
+its own async-call hygiene is an engineering-practice fact, not a rule about the
+business — the same reason the Phase 15 CI pipeline and the Phase 16 lint gate each
+carried a "no new BR" line. No BR is touched, reaffirmed, or amended; no schema, no
+application code.
+
 ## Adjustment Approval
 
 - **BR-085** [Decided 2026-09-03, Phase 12] — **A Staff-initiated adjustment is a

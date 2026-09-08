@@ -159,7 +159,10 @@ every pull request against `develop`, plus a manual trigger. Four jobs (Phase 14
 the last), each on a clean `postgres:17` service container where it needs a database:
 
 - **`lint`** — `npm run lint:check` (`eslint`, no `--fix`) and `nest build` (the
-  typecheck), both **blocking** as of Phase 16 (`docs/phase-16-plan.md`).
+  typecheck), both **blocking** as of Phase 16 (`docs/phase-16-plan.md`). As of Phase 25
+  (`docs/phase-25-plan.md`, issue #15) `no-floating-promises` and `no-unsafe-argument`
+  run at `error`, like every other rule the job enforces — the last two that had been
+  left at `warn`.
 - **`test`** — creates `smart_inventory_test`, runs `npm test` (unit + integration).
 - **`e2e`** — creates `smart_inventory_e2e`, runs the **whole migration chain from
   empty**, then `npm run test:e2e`. Nothing else exercises the migrations from scratch.
@@ -179,7 +182,26 @@ See `docs/learning-notes/ci-and-environments.md`.
 
 ## Current phase
 
-Phase 24 — Catalogue ordering indexes: measured, not added (`docs/phase-24-plan.md`,
+Phase 25 — Promote `no-floating-promises` / `no-unsafe-argument` from `warn` to `error`
+(`docs/phase-25-plan.md`, issue #15): `backend/eslint.config.mjs` had run these two rules
+below their `recommendedTypeChecked` default (`error`) since Phase 16, which deferred
+tightening them (§7) as "a separate decision about rule strictness [that] would surface
+its own set of call sites to fix". Phase 25 measured that set — a `--fix`-free
+`npm run lint:check` on the committed tree reports **0 errors, 0 warnings**, there is no
+`eslint-disable` anywhere, and the three deliberate fire-and-forget sites (`void
+bootstrap()`, the two `void this.…().catch(…)` background sweeps) already use the
+`void`-the-promise idiom the rule enforces — so the promotion is a **two-line severity
+change with no code to fix**. A `warn` in a pipeline whose required `lint:check` blocks
+on `error` (issue #6) pays the full type-aware analysis cost and buys none of the
+enforcement; that is why this was worth closing rather than carrying as a perpetual §7
+line. **No application code, no migration, no schema change, no API change** — the second
+"current phase" in a row (after Phase 24) whose deliverable is a decision plus a small
+change. "No new FR" (the fifteenth), "no new BR" (the twelfth). The DB-backed backend
+suites are unaffected by construction (a lint config is on no runtime path) and left to
+CI's `test` / `e2e` jobs. See `docs/architecture-observations.md`'s Phase 15/16 CI
+section, extended.
+
+Earlier phases: Phase 24 — Catalogue ordering indexes: measured, not added (`docs/phase-24-plan.md`,
 issue #14): Phases 11, 14, and 23 each carried a §7 line saying the `products.name` /
 `suppliers.name` / `users` orderings are unindexed and an index should be added *only if
 a realistic row count shows the paged query needs one*. Phase 24 runs that measurement —

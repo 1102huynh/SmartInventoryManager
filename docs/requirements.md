@@ -307,6 +307,20 @@ migration, no schema change, no code**: the deliverable is the measurement and t
 decision, which discharges the standing conditional Phases 11, 14, and 23 each carried in
 their §7.
 
+## Lint Rule Strictness (Phase 25 — no new FR, no schema change)
+
+Phase 25 (`docs/phase-25-plan.md`, issue #15) promotes
+`@typescript-eslint/no-floating-promises` and `@typescript-eslint/no-unsafe-argument`
+from `warn` to `error` in `backend/eslint.config.mjs` — the two rules that had run
+below their `recommendedTypeChecked` default since Phase 16, which deferred the change
+(§7) as a separate rule-strictness decision. The fifteenth "no new FR" note: no
+requirement reads differently; how strictly CI checks the backend's async-call hygiene
+is an engineering-practice fact. Like Phase 24 it does **not** touch `business-rules.md`
+either. **No migration, no schema change, no application code** — a two-line severity
+change plus the measurement that the committed tree already passes both rules (0
+errors, 0 warnings; no `eslint-disable` anywhere; the fire-and-forget sites already use
+`void`), so the "set of call sites to fix" Phase 16 §7 anticipated is empty.
+
 ## Cross-Reference Summary
 
 ```

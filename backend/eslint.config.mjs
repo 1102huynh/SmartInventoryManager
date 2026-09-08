@@ -27,8 +27,15 @@ export default tseslint.config(
   {
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/no-floating-promises': 'warn',
-      '@typescript-eslint/no-unsafe-argument': 'warn',
+      // Phase 25 (docs/phase-25-plan.md, issue #15): both promoted from `warn` to
+      // `error`. `recommendedTypeChecked` ships them as `error`; Phase 16 §7 dialled
+      // them down to `warn` because tightening was "a separate decision … [that] would
+      // surface its own set of call sites to fix". Phase 25 measured that set — it is
+      // empty (the tree already passes both, and the `void`-the-promise idiom is used
+      // at every deliberate fire-and-forget site) — so the promotion costs no code
+      // change and just stops a future violation landing as a passable warning.
+      '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-unsafe-argument': 'error',
       "prettier/prettier": ["error", { endOfLine: "auto" }],
     },
   },

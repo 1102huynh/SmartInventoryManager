@@ -529,6 +529,29 @@ an oversight:
 - **No coverage gate**, no build/dependency caching beyond `setup-node`'s npm cache, no
   jest sharding. The suite is minutes; optimise when it hurts (§7).
 
+**[Phase 25, `docs/phase-25-plan.md`, issue #15] — the last two rules below their
+default severity were promoted to `error`.** From Phase 16 to Phase 25,
+`backend/eslint.config.mjs` ran `@typescript-eslint/no-floating-promises` and
+`no-unsafe-argument` at `warn` while `recommendedTypeChecked` ships both as `error` —
+Phase 16 deferred tightening them as "a separate decision about rule strictness [that]
+would surface its own set of call sites to fix" (§7). Phase 25 measured that set: a
+`--fix`-free `npm run lint:check` on the committed tree reports **0 errors, 0
+warnings**, there is **no `eslint-disable` comment anywhere** in `src/` or `test/`, and
+the three deliberate fire-and-forget sites (`void bootstrap()` in `main.ts`, the two
+`void this.…().catch(…)` background sweeps in `AuditService` and
+`PostgresThrottlerStorage`) already use the `void`-the-promise idiom the rule enforces.
+The nine phases of backend work between 16 and 25 were each written while both rules
+printed on every local `npm run lint`, so the code kept clean of them as it went — the
+promotion catches the config up to a discipline the tree already follows, at the
+cheapest possible moment to make a rule stricter. Like Phase 24, the deliverable is a
+decision plus a two-line change, not a feature: no application code, no migration, no
+schema change. A `warn` in a pipeline whose required `lint:check` blocks on `error`
+(issue #6) is the worst configuration — it pays the full type-aware analysis cost and
+buys none of the enforcement — which is the standing reason this was worth closing
+rather than carrying as a perpetual §7 line. The test-file override
+(`no-unsafe-argument: 'off'` for `**/*.spec.ts` + `test/**/*.ts`, Phase 16's
+untyped-boundary rationale) is unchanged.
+
 **The learning-notes gap this phase named — reconciled against the history.**
 **[Corrected 2026-09-07, issue #5.]** This entry, `docs/phase-15-plan.md` §7, and
 `docs/phase-16-plan.md` §7 all record `docs/learning-notes/` as "frozen at Phase 8"

@@ -1,6 +1,6 @@
-# API Documentation — Phase 24
+# API Documentation — Phase 25
 
-Status: Phase 24 — catalogue ordering indexes measured, not added (no API change of any kind; see `docs/phase-24-plan.md`)
+Status: Phase 25 — `no-floating-promises` / `no-unsafe-argument` promoted from `warn` to `error` (a `backend/eslint.config.mjs` severity change; no API change of any kind; see `docs/phase-25-plan.md`)
 Base URL: `http://localhost:3000` (see `backend/.env.example`)
 
 Every resource response includes `createdAt` (an ISO timestamp, server-set, never

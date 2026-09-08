@@ -207,7 +207,7 @@ different questions and neither substitutes for the other:
 | Question | *How fast can anyone try?* | *How many times can one account fail in a row?* |
 | Scope | Per client address, per route | Per account, follows it across addresses |
 | Protects | The server (CPU, connections) | The user (their specific account) |
-| Storage | In-memory (`ThrottlerModule`) | Postgres (`users.failed_login_attempts`/`locked_until`) |
+| Storage | Postgres (`throttle_hits`) — was in-memory until Phase 21 | Postgres (`users.failed_login_attempts`/`locked_until`) |
 | Beaten by | An attacker who is patient or distributed | A password-spray attack (one guess each, across many accounts) |
 
 A throttle alone is beaten by an attacker willing to go slow, or to spread requests
@@ -224,6 +224,46 @@ account that's already locked (see the ordering rule below for why it has to), w
 means a locked account still burns real CPU per attempt — that's exactly the cost
 the request throttle exists to cap, by rejecting a flood before it ever reaches that
 comparison at all.
+
+### A per-process default store is a multi-instance trap (Phase 21)
+
+`@nestjs/throttler` ships an in-memory `Map` store by default, and that is a correct,
+invisible choice right up until the app runs as **more than one process**. A `Map`
+counts per process, so N instances behind the same clients each enforce the limit
+independently and the effective rate is N× what's configured — with no error and no
+warning, because nothing about a `Map` lookup can know there's a second instance. The
+account lock did not have this problem: it was in Postgres from the start (Phase 8),
+which every instance shares.
+
+Phase 21 (`docs/phase-21-plan.md`, issue #11) closes the gap by swapping in a custom
+store. `ThrottlerStorage` is a **one-method interface** —
+`increment(key, ttl, limit, blockDuration, throttlerName)` returning
+`{ totalHits, timeToExpire, isBlocked, timeToBlockExpire }` — and `ThrottlerModule`
+uses whatever object you pass as its `storage:` option instead of constructing the
+default. So a custom backend is: a class implementing that method
+(`PostgresThrottlerStorage`), a small module that provides it
+(`ThrottlerStorageModule`, with `TypeOrmModule.forFeature([ThrottleHit])`), and
+`imports: [ThrottlerStorageModule], inject: [..., PostgresThrottlerStorage]` on the
+existing `ThrottlerModule.forRootAsync`. Nothing about the guard, the limits, or the
+`@Throttle()` overrides changes — only where the count is kept.
+
+Two implementation choices worth knowing:
+
+- **Fixed window, not sliding.** The store keeps one row per key (`hits`, `expires_at`)
+  and resets `hits` to 1 on the first request after the window lapses — rather than the
+  default store's per-hit `setTimeout` decrements. This is what the ecosystem's Redis
+  store also does; it trades a small boundary burst (up to `2N` across `2·ttl`) for a
+  model you can hold in your head and one atomic SQL statement per request.
+- **One `INSERT … ON CONFLICT DO UPDATE`.** Postgres row-locks the conflicting row, so
+  concurrent requests for one key serialise and can't lose an increment — the store is
+  race-free without an explicit transaction, unlike `registerFailedLogin`'s read-then-
+  write counter, which Phase 8 §1 accepted a race on because a lock wasn't worth it
+  there.
+
+The general lesson: a library's default storage is a decision, and "in-memory" is a
+decision that quietly assumes one process. When the assumption might stop holding,
+check whether the library exposes a storage seam — most that keep state do — and what
+shared store you already run (here, Postgres for everything, so no new infrastructure).
 
 ## The enumeration-ordering rule, generalized
 

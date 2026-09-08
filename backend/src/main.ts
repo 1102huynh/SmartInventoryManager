@@ -1,11 +1,27 @@
 import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { NestFactory, Reflector } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { CORS_OPTIONS } from './common/cors-options';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { AppConfig } from './config/configuration';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  // Phase 21 (docs/phase-21-plan.md §1 Fork E). `req.ip` — which the throttler keys
+  // its (now shared, Postgres-backed) buckets on — is only honest if Express knows
+  // whether it sits behind a proxy. Off by default (direct connection, local dev);
+  // behind a load balancer TRUST_PROXY must be set or every request appears to come
+  // from the balancer's one address and the throttle treats the whole world as one
+  // client. See configuration.ts for how TRUST_PROXY is parsed.
+  const trustProxy = app
+    .get(ConfigService<AppConfig, true>)
+    .get('trustProxy', { infer: true });
+  if (trustProxy !== false) {
+    app.set('trust proxy', trustProxy);
+  }
 
   // The frontend (Step 7) runs on its own origin (a plain static file server, not
   // this API's origin), so the browser's same-origin policy would block its fetch()

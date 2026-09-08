@@ -11,6 +11,8 @@ import { DatabaseModule } from './database/database.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { ProductsModule } from './products/products.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
+import { PostgresThrottlerStorage } from './throttler/postgres-throttler.storage';
+import { ThrottlerStorageModule } from './throttler/throttler-storage.module';
 import { UsersModule } from './users/users.module';
 
 // The root module. It imports the cross-cutting pieces (config, database) directly,
@@ -31,10 +33,21 @@ import { UsersModule } from './users/users.module';
     // @nestjs/throttler's ThrottlerModule is itself @Global() — importing it once here
     // makes its providers (options, storage) injectable into AppThrottlerGuard
     // wherever that guard is declared, with no second import needed.
+    //
+    // Phase 21 (docs/phase-21-plan.md), issue #11: `storage` is a PostgresThrottlerStorage
+    // instead of the default in-memory Map. The Map counts per process, so the moment
+    // the API runs as N instances the throttle silently permits N× the configured rate
+    // (Phase 8 §7, architecture-observations.md). The Postgres store is shared, the same
+    // way account lockout already is. The `throttlers` array and the security.* limits
+    // are unchanged — only where the count is kept changes.
     ThrottlerModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (config: ConfigService<AppConfig, true>) => ({
+      imports: [ConfigModule, ThrottlerStorageModule],
+      inject: [ConfigService, PostgresThrottlerStorage],
+      useFactory: (
+        config: ConfigService<AppConfig, true>,
+        storage: PostgresThrottlerStorage,
+      ) => ({
+        storage,
         throttlers: [
           {
             name: 'default',

@@ -204,6 +204,16 @@ These columns are readable by anyone who can read the row and settable by no one
 they carry no access-control weight of their own and inherit whatever role rule
 already governs their table's routes.
 
+**[Added 2026-09-08, Phase 21]** `throttle_hits` (`docs/phase-21-plan.md`, issue #11)
+is **not a domain entity** and does not appear in the sections above — it is an
+operational/cache table holding `@nestjs/throttler`'s per-client request counts so the
+rate limits survive running the API as more than one instance. It deliberately carries
+**no** `created_at`/`updated_at`: this section's convention is about audit facts, and a
+disposable counter the next request overwrites has nothing to audit — the same call as
+the missing `updated_at` on the immutable tables, for the opposite reason. Its one
+timestamp, `expires_at`, is server-set operational state and so `timestamptz`, per the
+`users.locked_until` precedent.
+
 ## 9. Cross-References
 
 - Entities here are governed by rules in `business-rules.md` (see rule → entity references

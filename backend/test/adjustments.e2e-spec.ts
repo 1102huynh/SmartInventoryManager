@@ -57,7 +57,7 @@ describe('Adjustment approval (e2e)', () => {
 
   beforeEach(async () => {
     await dataSource.query(
-      'TRUNCATE TABLE adjustment_requests, inventory_transactions, products, suppliers, users, categories RESTART IDENTITY CASCADE',
+      'TRUNCATE TABLE adjustment_requests, inventory_transactions, products, suppliers, users, categories, throttle_hits RESTART IDENTITY CASCADE',
     );
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const rows: Array<{ id: number; role: string }> = await dataSource.query(

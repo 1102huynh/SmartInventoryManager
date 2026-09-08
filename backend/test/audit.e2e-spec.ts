@@ -64,7 +64,7 @@ describe('Audit log (e2e)', () => {
 
   beforeEach(async () => {
     await dataSource.query(
-      'TRUNCATE TABLE audit_events, inventory_transactions, products, suppliers, users, categories RESTART IDENTITY CASCADE',
+      'TRUNCATE TABLE audit_events, inventory_transactions, products, suppliers, users, categories, throttle_hits RESTART IDENTITY CASCADE',
     );
     const passwordHash = await bcrypt.hash(PASSWORD, 10);
     const rows = await dataSource.query(

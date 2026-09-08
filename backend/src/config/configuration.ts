@@ -3,6 +3,14 @@
 // at startup instead of silently as `undefined` deep inside some service.
 export interface AppConfig {
   port: number;
+  // Phase 21 (docs/phase-21-plan.md §1 Fork E): what to pass to Express's
+  // `app.set('trust proxy', …)` (see main.ts). `false` — the default — means the app
+  // talks to clients directly and `req.ip` is honest, which is correct for local dev.
+  // Behind a load balancer it MUST be set (a hop count, `'loopback'`, or a CIDR list),
+  // or every request looks like it comes from the balancer and the now-shared throttle
+  // treats the whole world as one client. Was a "deployment note, not a code change"
+  // in Phase 8; the shared throttle store makes it load-bearing.
+  trustProxy: boolean | number | string;
   database: {
     host: string;
     port: number;
@@ -28,10 +36,24 @@ export interface AppConfig {
   };
 }
 
+// Express accepts `trust proxy` as a boolean, a hop count, or a string
+// ('loopback', a comma-separated CIDR/IP list). Map TRUST_PROXY accordingly:
+// unset/'' -> false, 'true'/'false' -> boolean, all-digits -> number, else the
+// string verbatim.
+function parseTrustProxy(raw: string | undefined): boolean | number | string {
+  if (raw === undefined || raw.trim() === '') return false;
+  const value = raw.trim();
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  if (/^\d+$/.test(value)) return parseInt(value, 10);
+  return value;
+}
+
 // Passed to ConfigModule.forRoot({ load: [configuration] }) — Nest calls this once at
 // startup and merges the result into ConfigService, on top of the parsed .env file.
 export default (): AppConfig => ({
   port: parseInt(process.env.PORT ?? '3000', 10),
+  trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
   database: {
     host: process.env.DB_HOST ?? '127.0.0.1',
     port: parseInt(process.env.DB_PORT ?? '5432', 10),

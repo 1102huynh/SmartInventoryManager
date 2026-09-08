@@ -305,3 +305,13 @@ These affect the UI mockup and should be resolved before or during that phase.
   explicitly deferred removing is a frontend cleanup with no observable product change.
   No backend change, no migration, no `domain-model.md` change. Q-7 (multi-location)
   remains open, untouched since Phase 5.
+- **[Added 2026-09-08, Phase 21]** Shared throttle store (`docs/phase-21-plan.md`,
+  issue #11, `requirements.md`'s Phase 21 note, `business-rules.md`'s Phase 21 line,
+  `docs/architecture-observations.md`'s Phase 21 section). Same shape as the Phase 7,
+  10, 11, 14–17, 19, and 20 entries, not Phase 9's, 12's, or 18's: §4 gains no user
+  goal, §5 no use case, §7 no scope — giving `@nestjs/throttler` a Postgres-backed store
+  so its limits survive running the API as more than one instance is an infrastructure
+  change with no route or response difference. One additive migration (`throttle_hits`,
+  an operational table, not a domain entity), no `domain-model.md` change. It is the
+  successor Phase 8 §7 named by hand. Q-7 (multi-location) remains open, untouched since
+  Phase 5.

@@ -250,6 +250,22 @@ review-only scaffolding, not product. The real empty and error panels are unchan
 the in-page way of faking them is gone. No new FR, no backend change, no migration, no
 domain-model change.
 
+## Shared Throttle Store (Phase 21 — no new FR)
+
+Phase 21 (`docs/phase-21-plan.md`, issue #11) gives `@nestjs/throttler` a shared,
+Postgres-backed store (`throttle_hits`) in place of its default per-process `Map`, so
+the rate limits still mean what they say when the API runs as more than one instance.
+The eleventh "no new FR" note, kin to Phases 7, 8, 10, 11, 14–17, 19, and 20: **FR-060
+(user login) reads exactly as before.** Like Phase 8's authentication hardening, this
+adds no new FR — "the throttle counts in a shared store rather than per process" is not
+a user goal; the capability is that logging in keeps working while attacking it stays
+capped, now including when the API is scaled out. The rules are unchanged
+(`business-rules.md` BR-079–081). One new operational table (`throttle_hits`), one
+additive migration, no `domain-model.md` entity, no route or response change. Phase 21
+also promotes Phase 8's "`trust proxy` is a deployment note" to a real `TRUST_PROXY`
+setting, since a shared store keyed on a load balancer's one address would be worse than
+the per-instance throttle it replaces.
+
 ## Cross-Reference Summary
 
 ```

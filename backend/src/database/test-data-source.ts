@@ -5,6 +5,7 @@ import { Category } from '../categories/category.entity';
 import { InventoryTransaction } from '../inventory/inventory-transaction.entity';
 import { Product } from '../products/product.entity';
 import { Supplier } from '../suppliers/supplier.entity';
+import { ThrottleHit } from '../throttler/throttle-hit.entity';
 import { User } from '../users/user.entity';
 
 // Used ONLY by integration tests (see inventory.service.integration.spec.ts) — a
@@ -39,6 +40,7 @@ export function createTestDataSource(options?: {
       User,
       AuditEvent,
       AdjustmentRequest,
+      ThrottleHit,
     ],
     synchronize: true,
     dropSchema: true, // each test run starts from a clean schema

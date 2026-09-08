@@ -9,13 +9,14 @@ import { Product } from '../products/product.entity';
 import { User } from '../users/user.entity';
 import { DashboardService } from './dashboard.service';
 
-// INTEGRATION, not unit: Phase 19 (docs/phase-19-plan.md §1) moves the dashboard's
-// stock counts into one SQL query — the shared `joinCurrentStock` grouped-subquery
-// join — replacing `productsRepository.find()` + a second
-// `inventoryService.getCurrentStockMap()` round-trip. A mock repository cannot prove
-// the join sums the deltas, that a product with no transactions reads 0, or that the
-// name ordering `needsAttention` now relies on is really applied. Only a real
-// database can. dashboard.service.spec.ts keeps the fast BR-062 unit coverage.
+// INTEGRATION, not unit: Phase 19 moved the dashboard's stock counts into one SQL
+// query; Phase 23 (docs/phase-23-plan.md §1 Fork C) makes current stock a materialised
+// column, so `getSummary` is a plain name-ordered `productsRepository.find()` reading
+// `product.current_stock`. A mock repository cannot prove the backfill / write-path
+// keeps that column equal to a replay of the deltas, that a product with no
+// transactions reads 0, or that the name ordering `needsAttention` relies on is
+// applied. Only a real database can. dashboard.service.spec.ts keeps the fast BR-062
+// unit coverage.
 //
 // Requires the local Postgres from tools/ to be running (see tools/README.md).
 describe('DashboardService.getSummary (integration, Phase 19)', () => {
@@ -84,6 +85,15 @@ describe('DashboardService.getSummary (integration, Phase 19)', () => {
         })),
       );
     }
+    // Phase 23: direct inserts bypass the locking write path, so materialised
+    // current_stock must be recomputed from history here — the same expression the
+    // migration backfill and InventoryService.rewriteCurrentStock use.
+    await dataSource.query(
+      `UPDATE products SET current_stock = COALESCE(
+         (SELECT SUM(quantity_delta) FROM inventory_transactions WHERE product_id = $1), 0)
+       WHERE id = $1`,
+      [product.id],
+    );
     return product;
   }
 

@@ -84,6 +84,41 @@ composed into a larger one.
 delta computation, the zero-delta check, and the insert. Two code paths that must
 produce identical rows should not be two pieces of code.
 
+## Phase 23: the same lock now also maintains a materialised column
+
+Phase 23 stores current stock as `products.current_stock` instead of summing
+`inventory_transactions` on every read. The risk in denormalising a value is that the
+copy drifts from its source. Here it cannot, and the reason is the lock this note is
+about.
+
+`InventoryService.insertTransaction` — the one method all four write paths funnel
+through — after inserting the transaction row, runs:
+
+```sql
+UPDATE products
+   SET current_stock = COALESCE(
+     (SELECT SUM(quantity_delta) FROM inventory_transactions WHERE product_id = $1), 0)
+ WHERE id = $1
+```
+
+on the **same `EntityManager`** the caller opened, so it is inside the same transaction
+and the same `SELECT … FOR UPDATE` on the product row. Two things follow:
+
+- **It recomputes from history, never `current_stock + delta`.** Every stock write
+  rewrites the column from the product's full transaction history, so BR-042 ("current
+  stock is always reproducible by replaying history") holds *by construction* — the
+  only writer of the column replays history to write it. A value left wrong by a bug
+  self-heals on that product's next write.
+- **It needed no new concurrency story.** A second writer for the same product already
+  blocks on the row lock until the first commits; when it proceeds, its own recompute
+  sees the first writer's committed transaction row. The lock that stops oversell
+  (BR-041) serialises the column maintenance for free.
+
+The general lesson: a derived value is safe to materialise **when there is already a
+serialisation point that every writer passes through**. Without the product-row lock,
+`current_stock` would have needed one invented for it — and that, not the column
+itself, is where the difficulty would have been.
+
 ## Common Mistakes
 
 - Reading current stock in one query, then writing in a separate, unlocked query "for

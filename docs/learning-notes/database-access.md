@@ -448,6 +448,29 @@ A table whose stale rows are *business* data — `inventory_transactions` — is
 deliberately not swept at all: it is kept for good (BR-050/BR-051). The mechanism is for
 operational and security tables whose old rows have a shelf life.
 
+## Materialising a derived value when its table can't be bounded (Phase 23)
+
+The sweep above is one answer to "a read's cost grows with how long the business has
+run": bound the table the read draws from. It only works when the old rows are
+disposable. `inventory_transactions` is the opposite — every row is business history,
+kept forever — and current stock was a `SUM(quantity_delta)` over the whole of it on
+every `GET /products` and every dashboard load.
+
+The other answer, when the table can't shrink: **move the aggregate off the read path**
+and store the result. Phase 23 adds `products.current_stock`, backfilled once by
+migration and then rewritten from the product's full history on every stock write
+(`InventoryService.insertTransaction`, under the row lock — see
+`database-transactions.md`). Reads (`ProductsService.findAll`/`findOne`,
+`DashboardService.getSummary`) read the column; the `status=low`/`out` filters become
+`WHERE product.current_stock <= …`.
+
+The rule that keeps a stored copy honest: **recompute it from source on every write, do
+not patch it.** `SET current_stock = (SELECT SUM(...) ...)`, never
+`SET current_stock = current_stock + :delta`. The first makes drift impossible (the
+write replays history); the second turns any single arithmetic slip into permanent
+silent corruption. The cost of recomputing — one indexed aggregate over one product —
+is paid on the write, which is rare, not the read, which is hot.
+
 ## Common Mistakes
 
 - Giving a nullable TypeScript field (`string | null`) a `@Column()` with no explicit

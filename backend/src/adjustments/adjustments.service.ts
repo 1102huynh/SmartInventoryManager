@@ -141,8 +141,9 @@ export class AdjustmentsService {
       });
 
     const { rows, truncated } = trimToLimit(await qb.getMany(), limit);
-    // One GROUP BY over inventory_transactions for every distinct product in the page,
-    // the same N+1-avoidance ProductsService.findAll uses — not one aggregate per row.
+    // One read of products.current_stock for every distinct product in the page
+    // (Phase 23 — the materialised column, no longer a GROUP BY aggregate), so a
+    // pending request's "current stock" preview matches the Product List exactly.
     const stockMap = await this.inventoryService.getCurrentStockMap([
       ...new Set(rows.map((r) => r.productId)),
     ]);

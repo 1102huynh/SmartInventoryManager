@@ -13,11 +13,6 @@ import { AuditEventType } from '../common/enums/audit-event-type.enum';
 import { EntityStatus } from '../common/enums/entity-status.enum';
 import { InventoryService } from '../inventory/inventory.service';
 import { Paged, pageEnvelope, resolvePaging } from '../common/pagination';
-import {
-  CURRENT_STOCK_EXPR,
-  STOCK_AGG_ALIAS,
-  joinCurrentStock,
-} from '../inventory/stock-aggregate.query';
 import { CreateProductDto } from './dto/create-product.dto';
 import { QueryProductsDto } from './dto/query-products.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -34,10 +29,12 @@ export interface ProductWithStock extends Product {
   hasHistory: boolean;
 }
 
-// The two computed columns `findAll`'s query adds via `addSelect`, read back off
-// `getRawAndEntities` (Phase 14, Fork B).
-interface RawStock {
-  currentStock: string | number | null;
+// Phase 23 (docs/phase-23-plan.md §1 Fork C): `currentStock` is now a real column on
+// `Product` (materialised, kept equal to a replay of history by the write path), so it
+// hydrates onto the entity and no longer rides `getRawAndEntities`. Only `hasHistory`
+// is still a per-row `addSelect` — a correlated `EXISTS`, cheaper than the grouped
+// `SUM` subquery it replaces — read back off the raw rows.
+interface RawHasHistory {
   hasHistory: boolean;
 }
 
@@ -60,27 +57,23 @@ export class ProductsService {
     // only expresses that cleanly as an array of whole where-clauses (awkward here),
     // while the query builder lets andWhere/OR nest naturally.
     //
-    // Phase 14 (docs/phase-14-plan.md §1 Fork B): current stock and `hasHistory` are
-    // computed IN this query now — a grouped subquery join over inventory_transactions
-    // (`IDX_2520d97de0c9a0fbfc9b00f4c1` on product_id backs the GROUP BY) — instead of
-    // the two extra round-trips (`getCurrentStockMap` + `getHasHistoryMap`) this method
-    // used to fire after `getMany`. That is what lets `low`/`out` become real WHERE
-    // conditions below: `?status=low&pageSize=50` now pages the low-stock set, where
-    // the old post-fetch `.filter()` would have taken 50 products by name and *then*
-    // filtered (Phase 11 §1's failure mode). This runs whether or not paging is
-    // active — one code path, a strict improvement even for the unpaged callers.
+    // Phase 14 (docs/phase-14-plan.md §1 Fork B) made `low`/`out` real WHERE
+    // conditions instead of a post-fetch `.filter()` — the fix for "take 50 products
+    // by name and *then* filter" (Phase 11 §1's failure mode). Phase 19 shared the
+    // stock aggregate as `joinCurrentStock` so the dashboard ran the identical query.
     //
-    // Phase 19 (docs/phase-19-plan.md §1): the stock-aggregate join moved to a
-    // shared helper so `DashboardService.getSummary` runs the identical query. The
-    // `hasHistory` select and the low/out filters below are ProductsService's own —
-    // they build on top of the helper's aggregate.
-    const qb = joinCurrentStock(
-      this.productsRepository.createQueryBuilder('product'),
-    )
-      // A GROUP BY row exists for a product iff it has at least one transaction — so
-      // "the join matched" *is* hasHistory, including for a product whose deltas
-      // happen to sum to zero.
-      .addSelect(`${STOCK_AGG_ALIAS}.product_id IS NOT NULL`, 'hasHistory')
+    // Phase 23 (docs/phase-23-plan.md §1 Fork C): current stock is a materialised
+    // column now (`product.current_stock`), so `low`/`out` filter it directly and the
+    // grouped `SUM` subquery — and the `joinCurrentStock` helper — are gone. Only
+    // `hasHistory` is still computed here: a correlated `EXISTS` over
+    // inventory_transactions (`IDX_2520d97de0c9a0fbfc9b00f4c1` on product_id backs it,
+    // and EXISTS short-circuits on the first row), keeping `findAll` a single query.
+    const qb = this.productsRepository
+      .createQueryBuilder('product')
+      .addSelect(
+        `EXISTS (SELECT 1 FROM inventory_transactions itx WHERE itx.product_id = product.id)`,
+        'hasHistory',
+      )
       .orderBy('product.name', 'ASC');
     if (query.status === 'active')
       qb.andWhere('product.status = :status', { status: EntityStatus.ACTIVE });
@@ -97,19 +90,19 @@ export class ProductsService {
         search: `%${query.search}%`,
       });
     }
-    // Fork B: low/out are WHERE conditions over the in-query aggregate, not a
-    // post-SQL `.filter()`. `outOfStock` is `currentStock <= 0` (a product with no
+    // low/out are WHERE conditions over the materialised column, not a post-SQL
+    // `.filter()`. `outOfStock` is `current_stock <= 0` (a product with no
     // transactions is out of stock); `lowStock` needs a configured threshold —
     // BR-060/061's "null means never flagged".
     if (query.status === 'low')
       qb.andWhere(
-        `product.low_stock_threshold IS NOT NULL AND ${CURRENT_STOCK_EXPR} <= product.low_stock_threshold`,
+        `product.low_stock_threshold IS NOT NULL AND product.current_stock <= product.low_stock_threshold`,
       );
-    if (query.status === 'out') qb.andWhere(`${CURRENT_STOCK_EXPR} <= 0`);
+    if (query.status === 'out') qb.andWhere(`product.current_stock <= 0`);
 
     const paging = resolvePaging(query);
     if (!paging) {
-      const { entities, raw } = await qb.getRawAndEntities<RawStock>();
+      const { entities, raw } = await qb.getRawAndEntities<RawHasHistory>();
       return this.mergeStock(entities, raw);
     }
     // Count the filtered set before the window is applied — `getCount` drops the
@@ -117,18 +110,20 @@ export class ProductsService {
     // WHERE, so `total` is the number of matches, not the page.
     const total = await qb.getCount();
     qb.offset(paging.skip).limit(paging.take);
-    const { entities, raw } = await qb.getRawAndEntities<RawStock>();
+    const { entities, raw } = await qb.getRawAndEntities<RawHasHistory>();
     return pageEnvelope(this.mergeStock(entities, raw), total, paging);
   }
 
-  // Re-attaches the in-query computed columns (index-aligned with the entities) onto
-  // each Product, and derives `lowStock`/`outOfStock` from `currentStock` exactly as
-  // `attachStock` does for the single-product reads. `currentStock` comes back from
-  // `pg` as a numeric string (COALESCE over a bigint SUM); `hasHistory` as a real
-  // boolean.
-  private mergeStock(products: Product[], raw: RawStock[]): ProductWithStock[] {
+  // `currentStock` is a hydrated column on the entity now (Phase 23); only
+  // `hasHistory` is read back off the index-aligned raw rows (a real boolean from the
+  // `EXISTS` select). `lowStock`/`outOfStock` are derived from `currentStock` exactly
+  // as `attachStock` does for the single-product reads.
+  private mergeStock(
+    products: Product[],
+    raw: RawHasHistory[],
+  ): ProductWithStock[] {
     return products.map((product, i) => {
-      const currentStock = Number(raw[i]?.currentStock ?? 0);
+      const currentStock = product.currentStock;
       const hasHistory = raw[i]?.hasHistory === true;
       const lowStock =
         product.lowStockThreshold !== null &&
@@ -146,9 +141,9 @@ export class ProductsService {
   async findOne(id: number): Promise<ProductWithStock> {
     const product = await this.productsRepository.findOne({ where: { id } });
     if (!product) throw new NotFoundException(`Product ${id} not found.`);
-    const currentStock = await this.inventoryService.getCurrentStock(id);
+    // Phase 23: current stock is on the entity; `hasHistory` still its own count.
     const hasHistory = await this.inventoryService.hasHistory(id);
-    return this.attachStock(product, currentStock, hasHistory);
+    return this.attachStock(product, product.currentStock, hasHistory);
   }
 
   async create(dto: CreateProductDto, actorId: number): Promise<Product> {

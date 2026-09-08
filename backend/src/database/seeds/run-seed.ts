@@ -683,6 +683,19 @@ async function run() {
     );
     await txRepo.save(rows);
 
+    // Phase 23 (docs/phase-23-plan.md §1 Fork G): the transaction rows above were
+    // inserted straight through the repository, bypassing InventoryService — so
+    // nothing has maintained products.current_stock. Rewrite it from the seeded
+    // history now, the exact expression the migration backfill and
+    // InventoryService.rewriteCurrentStock use, so `npm run seed` still produces the
+    // mockup's numbers (now in the column as well as the history).
+    await manager.query(
+      `UPDATE "products"
+          SET "current_stock" = COALESCE(
+            (SELECT SUM("quantity_delta") FROM "inventory_transactions"
+              WHERE "product_id" = "products"."id"), 0)`,
+    );
+
     console.log(
       `Seeded ${categories.length} categories, ${users.length} users, ${suppliers.length} suppliers, ${products.length} products, ${rows.length} transactions.`,
     );

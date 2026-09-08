@@ -33,7 +33,7 @@ the system exists to support this core.
 | Category | Yes, as supporting/optional | Organizational aid only; a product remains fully functional without one. Not required for core invariants. |
 | Supplier | Yes, as supporting | Needed to attribute stock-in and answer "where did this come from," but the inventory model works even if supplier is omitted on a transaction (see product.md Q-2). |
 | Inventory Transaction | Yes | Core — the single source of truth for all stock movement (stock-in, stock-out, adjustment are three *types* of the same concept, not three separate entities). |
-| "Current Stock" as its own entity | No, modeled as a derived value | Current stock is a computed projection of a product's transactions, not an independently-owned entity with its own lifecycle (BR-040, BR-042). It may be *materialized* for performance later, but conceptually it is not a first-class domain entity. |
+| "Current Stock" as its own entity | No, modeled as a derived value | Current stock is a computed projection of a product's transactions, not an independently-owned entity with its own lifecycle (BR-040, BR-042). **It is materialised as of Phase 23** (`products.current_stock`) for read performance — still not a first-class domain entity, just a stored projection of the transaction history kept equal to a fresh replay by the write-path invariant BR-043. |
 | User | Yes, minimal | Needed for transaction attribution and login; role/permission modeling deferred. |
 | Sale / Order | Not included (Future) | Q-4 (product.md) is **resolved** (Phase 18) toward the lighter form: a stock-out carries an optional `reasonCategory`, and `sale` is one value in that enum — no customer, no price, no line items (Q-1). A first-class Sale/Order entity would only be needed to record *who* bought something or to itemise one outbound movement, neither of which is in scope; it stays Future. See BR-023, `docs/phase-18-plan.md`. |
 | Purchase Order | Not included (Future) | Procurement workflow is explicitly postponed. |
@@ -47,7 +47,9 @@ the system exists to support this core.
 Represents an item the business stocks and tracks. Responsible for holding identity (SKU),
 descriptive information, unit of measurement, status (Active/Inactive), and its low-stock
 threshold. Does not hold its own "quantity" field as a source of truth — quantity is derived
-from its transactions.
+from its transactions. It *does* carry a materialised `current_stock` column as of Phase 23,
+but that is a stored copy of the derivation, not an editable field: it is only ever rewritten
+from the transaction history, on every stock write, under the product-row lock (BR-042/BR-043).
 
 ### Category (supporting, Should Have)
 Groups products for organization/filtering. Has no behavior of its own beyond
@@ -111,11 +113,16 @@ Adjustment Request  0..1 ── 1 Inventory Transaction  (the transaction an app
 
 Current stock for a Product is derived by aggregating all of its Inventory Transactions
 (sum of stock-in and positive adjustments, minus stock-out and negative adjustments).
+Since Phase 23 that sum is **stored** on the Product (`current_stock`) and recomputed
+from the full history on every stock write; the derivation is unchanged, only its
+enforcement point moved from "every read" to "every write" (BR-042/BR-043).
 
 ## 6. Important Invariants
 
-- A Product's current stock (however computed or materialized) is always the sum of its
-  Inventory Transactions and can never be negative. (BR-040, BR-041, BR-042)
+- A Product's current stock (materialised since Phase 23 as `products.current_stock`,
+  and equal to it) is always the sum of its Inventory Transactions and can never be
+  negative. The stored column is rewritten from that sum on every stock write, under
+  the product-row lock — never patched incrementally. (BR-040, BR-041, BR-042, BR-043)
 - Every Inventory Transaction references exactly one Product.
 - Inventory Transactions are immutable once recorded; corrections happen only by recording
   new transactions (adjustments). (BR-051)
@@ -161,7 +168,13 @@ both processes run on one machine today, and nothing checked that they did.
 
 - **`products`, `suppliers`, `users`, `categories`** — mutable rows, so all four carry
   both columns (`users`/`categories` since Phase 7, `docs/phase-7-plan.md`; the other
-  two since `InitSchema`).
+  two since `InitSchema`). **[Noted 2026-09-08, Phase 23]** The materialised
+  `products.current_stock` (BR-043) is rewritten by a raw, targeted `UPDATE` that does
+  **not** touch `updated_at` — deliberately. `updated_at` on a catalogue row means
+  "someone edited this product's own attributes" (name, SKU, threshold, status); a
+  stock movement is recorded on `inventory_transactions` with its own `occurred_at` and
+  `created_at`, and letting every stock-in bump the product's `updated_at` would blur
+  that meaning. The derived column moving is not the product being edited.
 - **`inventory_transactions`** — the worked example of the immutable case: `created_at`
   only. BR-051 makes a recorded transaction immutable — corrections happen only by
   recording a new transaction, never by editing an old one — so an `updated_at` on

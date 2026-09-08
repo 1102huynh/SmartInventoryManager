@@ -80,8 +80,25 @@ involved.
   its stock-in, stock-out, and adjustment transactions; it is a derived value, not an
   independently editable field. → FR-023, FR-024
 - **BR-041** [Confirmed] — Current stock can never be negative. → BR-021, BR-033
-- **BR-042** [Confirmed] — **Consistency.** Current stock must always be reproducible by
-  replaying the product's full transaction history — the two can never diverge. → FR-024
+- **BR-042** [Confirmed; mechanism amended 2026-09-08, Phase 23] — **Consistency.**
+  Current stock must always be reproducible by replaying the product's full transaction
+  history — the two can never diverge. **As of Phase 23 it is stored**, as
+  `products.current_stock` (a materialisation, `docs/phase-23-plan.md`, issue #13), so
+  that the Product List and dashboard reads no longer aggregate the whole (unprunable)
+  `inventory_transactions` table on every request. The guarantee is kept *mechanically*
+  by BR-043: every stock write recomputes the column from the product's full history
+  under the pessimistic product-row lock, so the stored value and a fresh replay are
+  equal at every commit. The column is never incrementally patched and no read trusts
+  it without that guarantee. → FR-024
+- **BR-043** [Decided 2026-09-08, Phase 23] — **The write-path invariant that keeps
+  BR-042 true.** Every code path that records a stock-in, stock-out, or adjustment does
+  so through the one locked write (`InventoryService.insertTransaction`) that, after
+  inserting the transaction row, rewrites `products.current_stock` to
+  `COALESCE(SUM(quantity_delta), 0)` over that product's history — inside the same
+  transaction and the same `SELECT … FOR UPDATE` on the product row that BR-041 relies
+  on. No path adds a delta to the stored value or reads it back without a recompute; a
+  value left wrong by a bug self-heals on that product's next write. → BR-040, BR-041,
+  BR-042, FR-024
 
 ## Inventory History
 
@@ -406,6 +423,20 @@ rate-limited per client address and repeated failures lock an account — *where
 throttle keeps its count* is an implementation fact, not a rule. Account lockout
 (`users.failed_login_attempts`/`locked_until`) was already Postgres-backed and is
 unchanged; this closes the gap the throttle side carried.
+
+**[2026-09-08, Phase 23]** One new BR (**BR-043**, above) and one amended (**BR-042**) —
+the first change to this section since Phase 12, and the first since Phase 18 that is
+not a "no new BR" note. `docs/phase-23-plan.md` (issue #13) materialises current stock
+as `products.current_stock` so the Product List and dashboard reads stop summing the
+whole of `inventory_transactions` on every request — the successor Phase 11 §7 named
+and Phase 14 Fork B / Phase 19 re-parked, acted on now because Phase 22 closed the
+same "cost grows with how long the business has run" shape for `audit_events` and named
+`inventory_transactions` as the table its prune could not reach. BR-040 (current stock
+is the net of a product's transactions, a derived value) and BR-041 (never negative)
+are **unchanged in meaning**; BR-042 keeps its guarantee but now names the stored
+column and the recompute-on-write mechanism, and BR-043 states that write-path
+invariant. `requirements.md` carries the "no new FR" note (reading a number that means
+what it always meant is still FR-023/FR-024).
 
 ## Adjustment Approval
 

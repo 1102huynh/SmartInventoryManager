@@ -233,17 +233,20 @@ involved.
 
 - **BR-082** [Decided 2026-08-25, Phase 9] — **Every administrative and
   authentication event is recorded, and the record is append-only.** A closed list of
-  event types (`docs/phase-9-plan.md` §1) is written to `audit_events` as it happens;
-  rows are never updated or deleted by any code path in this application. The record
-  names the **actor** (the authenticated principal who acted, `NULL` for anonymous
+  event types (`docs/phase-9-plan.md` §1) is written to `audit_events` as it happens.
+  Rows are never *updated*, and never individually deleted — the one deletion path is
+  the age-based retention prune (**BR-090**, added Phase 22), which is bulk and
+  time-based and cannot target a chosen row, so the log stays append-only in the sense
+  that matters for trust: no specific event can be quietly altered or removed. The
+  record names the **actor** (the authenticated principal who acted, `NULL` for anonymous
   events) and the **subject** (the account the event is about) as two distinct facts
   — a failed login has a subject and no actor, because the person who typed the wrong
   password is precisely not the account holder. Recording is **best-effort**: a
   failed audit write never fails the operation it describes
   (`AuditService.record`'s `try/catch`), so the log is a *record*, not a *proof*. The
   client address is captured on authentication events only (`actorIp`, `NULL` on
-  every administrative event) — this is personal data, in a table with no retention
-  limit (see "Explicitly out of scope," Phase 9 §7).
+  every administrative event) — this is personal data, retained at most one year
+  (**BR-090**, Phase 22 — before then the table had no retention limit).
   - **Not every credential-verification failure is recorded.** `PATCH
     /auth/password` (a self-service password change) records nothing when the
     supplied *current* password is wrong — a deliberate exclusion, not an oversight.
@@ -278,6 +281,19 @@ involved.
   direction; opening this read to Staff would reopen it from the inside. Enforced by
   a class-level `@Roles(UserRole.Owner)` on `AuditController`, the second controller
   to use the class-level form after BR-074's `UsersController`. → FR-065, BR-074
+- **BR-090** [Decided 2026-09-08, Phase 22] — **The audit log is pruned to a rolling
+  one-year window.** An `audit_events` row whose `created_at` is more than a year old
+  is deleted. This is the retention policy Phase 9 §7 deferred by name, with its
+  trigger ("a slow audit screen, or a backup size that surprises someone") now met —
+  the table grows without any user acting, almost entirely from `login_failed`, so
+  left unbounded its size is a function of how long the business has run. The prune is
+  **best-effort and has no scheduler**: an opportunistic probabilistic sweep on
+  `AuditService.record()` (the same 1-in-1000 mechanism Phase 21 gave `throttle_hits`)
+  plus one unconditional pass at startup. Like the write it guards (BR-082), a failed
+  prune is logged and swallowed, so a sustained run of failures would let the table
+  grow again silently — the trade a 1–10 person business's *record, not proof* accepts.
+  The window is a constant, not configuration (`docs/phase-22-plan.md` §1 Fork A). →
+  BR-082, FR-065
 
 BR-078 gains a cross-reference: an Owner's reset is recorded as `user_password_reset`
 (BR-082), and the lock it clears is visible in the same log (`setPassword`'s summary

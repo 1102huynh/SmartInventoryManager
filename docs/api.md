@@ -1,6 +1,6 @@
-# API Documentation — Phase 21
+# API Documentation — Phase 22
 
-Status: Phase 21 — Shared throttle store (no route or shape change)
+Status: Phase 22 — `audit_events` retention prune (no route or shape change)
 Base URL: `http://localhost:3000` (see `backend/.env.example`)
 
 Every resource response includes `createdAt` (an ISO timestamp, server-set, never
@@ -300,6 +300,12 @@ about a product, supplier, or category, not a user). `entityType`/`entityId` nam
 non-user target of an administrative event and are **not** a foreign key — an event
 about a deleted product still names it, by id, after the product itself is gone
 (BR-082).
+
+**Phase 22 (`docs/phase-22-plan.md`): results never include events older than one
+year.** Rows past that age are pruned from `audit_events` by a background sweep
+(BR-090) — best-effort, no scheduler. This bounds the table, not just this read; no
+query parameter, response field, or status code changes, and `?days=N` still means
+"the last N calendar dates" for any `N` up to the retained year.
 
 | Method | Path | Query | Notes |
 |---|---|---|---|

@@ -16,10 +16,12 @@ describe('AuditService', () => {
     create: jest.fn((v) => v),
     save: jest.fn((v) => Promise.resolve({ id: 1, ...v })),
     createQueryBuilder: jest.fn(),
+    query: jest.fn().mockResolvedValue([]),
   };
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    jest.restoreAllMocks();
     const moduleRef = await Test.createTestingModule({
       providers: [
         AuditService,
@@ -78,6 +80,59 @@ describe('AuditService', () => {
           summary: 'Login succeeded',
         }),
       ).resolves.toBeUndefined();
+    });
+  });
+
+  // Phase 22 (docs/phase-22-plan.md §5). The prune's SQL semantics — which rows a
+  // one-year cutoff actually deletes — are pinned by the integration spec against real
+  // Postgres. What the unit layer owns is the wiring: that record() rolls the dice and
+  // fires the DELETE only on a hit, that a failing prune is swallowed the way a failing
+  // write is, and that startup prunes unconditionally.
+  describe('retention prune', () => {
+    const RETENTION_DELETE = expect.stringMatching(/DELETE FROM audit_events/);
+
+    it('record() fires the DELETE when the probability roll passes, with a 365-day cutoff', async () => {
+      jest.spyOn(Math, 'random').mockReturnValue(0);
+      await service.record({
+        eventType: AuditEventType.LOGIN_SUCCEEDED,
+        subjectUserId: 1,
+        summary: 'Login succeeded',
+      });
+      expect(repo.query).toHaveBeenCalledWith(RETENTION_DELETE, [365]);
+    });
+
+    it('record() does not prune when the roll misses', async () => {
+      jest.spyOn(Math, 'random').mockReturnValue(0.5);
+      await service.record({
+        eventType: AuditEventType.LOGIN_SUCCEEDED,
+        subjectUserId: 1,
+        summary: 'Login succeeded',
+      });
+      expect(repo.query).not.toHaveBeenCalled();
+    });
+
+    it('record() still resolves when the prune query rejects — best-effort, like the write', async () => {
+      jest.spyOn(Math, 'random').mockReturnValue(0);
+      repo.query.mockRejectedValueOnce(new Error('deadlock detected'));
+      await expect(
+        service.record({
+          eventType: AuditEventType.LOGIN_SUCCEEDED,
+          subjectUserId: 1,
+          summary: 'Login succeeded',
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('onApplicationBootstrap() prunes unconditionally, without rolling', async () => {
+      const random = jest.spyOn(Math, 'random');
+      await service.onApplicationBootstrap();
+      expect(random).not.toHaveBeenCalled();
+      expect(repo.query).toHaveBeenCalledWith(RETENTION_DELETE, [365]);
+    });
+
+    it('onApplicationBootstrap() does not throw when the prune query rejects', async () => {
+      repo.query.mockRejectedValueOnce(new Error('connection lost'));
+      await expect(service.onApplicationBootstrap()).resolves.toBeUndefined();
     });
   });
 

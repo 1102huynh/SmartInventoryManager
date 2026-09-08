@@ -266,6 +266,20 @@ also promotes Phase 8's "`trust proxy` is a deployment note" to a real `TRUST_PR
 setting, since a shared store keyed on a load balancer's one address would be worse than
 the per-instance throttle it replaces.
 
+## Audit Retention (Phase 22 — no new FR)
+
+Phase 22 (`docs/phase-22-plan.md`, issue #12) bounds `audit_events` to a rolling
+one-year window — rows older than that are deleted by an opportunistic probabilistic
+sweep on `AuditService.record()` plus a one-shot at startup, with no scheduler and no
+new dependency. The twelfth "no new FR" note, kin to Phases 7, 8, 10, 11, 14–17, and
+19–21: **FR-065 (view audit log) reads exactly as before** — an Owner never sees or
+triggers the prune; the audit screen simply never shows an event older than a year.
+Unlike those phases this one *does* add a business rule (`business-rules.md` BR-090,
+with BR-082 amended): how long the log is kept is a statement about the business's
+relationship to its own records, not an implementation detail. No new table, no
+migration, no schema change (the prune reuses Phase 9's `created_at` index), no
+`domain-model.md` entity, no route or response change.
+
 ## Cross-Reference Summary
 
 ```

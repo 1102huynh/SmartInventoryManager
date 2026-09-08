@@ -895,3 +895,59 @@ default) keeps `req.ip` honest for a directly-connected local dev server.
 **No FR, no BR** (the Nth of each): BR-079/BR-080 read exactly as before — where the
 throttle keeps its count is not a business rule. **No `domain-model.md` entity**:
 `throttle_hits` is an operational/cache table that models nothing in `product.md`.
+
+## Cross-cutting: the opportunistic-prune pattern, used a second time (Phase 22)
+
+Phase 22 (`docs/phase-22-plan.md`, issue #12) bounds `audit_events` to a rolling
+one-year window — rows older than that are deleted by an opportunistic probabilistic
+sweep on `AuditService.record()` (probability `0.001`, the exact rate
+`postgres-throttler.storage.ts` uses) plus one unconditional pass on
+`OnApplicationBootstrap`. It is the retention policy Phase 9 §7 deferred by name, with
+the trigger that section wrote down — "a slow audit screen, or a backup size that
+surprises someone" — now reported met.
+
+**This is the same mechanism Phase 21 built for `throttle_hits`, applied to a second
+table — and that repetition is itself the observation.** The Phase 11 section noted that
+"three preconditions of one shape" was "the pattern this codebase reaches for, not three
+coincidences"; the same is true here in the other direction. Faced twice with "a table
+needs periodic bulk cleanup and this project has no scheduler," the answer both times
+was a cheap `DELETE` piggybacked on the hot-path write that drives the table's growth,
+guarded by a probability and backstopped at startup — never `@nestjs/schedule` (refused
+in Phase 12 and Phase 21 Fork C2) or `pg_cron` (refused in Phase 21 §7). The pattern is
+now a documented convention with two instances, the same way Phase 12 found Phase 11's
+bounded-read convention reusable "without re-derivation." The two properties that make
+it legitimate, and that a third use should be checked against: the work must **tolerate
+being skipped** — its loss is bounded (`audit_events`: at most a slightly oversized
+table until the next roll) or ephemeral (`throttle_hits`: the limits reset for seconds),
+never a wrong answer — and it must be **cheap enough to be invisible** on the request
+that happens to trigger it (one indexed `DELETE`, not `await`ed).
+
+**The audit subsystem now has two best-effort, unmonitored background operations, not
+one.** The Phase 9 section above named the best-effort *write* (BR-082 — a failed
+`record()` is caught, logged, swallowed) as a precondition of the same shape as the
+in-memory throttle store: correct at this scale, silently degrading if it stops holding.
+Phase 22 adds the best-effort *prune* (BR-090) on the identical premise — a sustained
+run of prune failures lets the table grow unbounded again with nothing surfaced where a
+person would see it. Both are deliberate, both rest on "a 1–10 person business's audit
+log is a *record, not a proof*," and both would want a real alarm or a durable queue at
+a different scale. The startup prune is a partial backstop the write does not have:
+every deploy clears whatever the probabilistic path missed.
+
+**What Phase 22 does *not* touch.** It is not one of this file's three named unenforced
+preconditions being retired — those are the in-memory throttle store (closed Phase 21),
+the best-effort audit write, and the unbounded `GET /categories` reference-cache read.
+Retention was a Phase 9 §7 deferral with its own trigger, not a precondition in that
+ledger. But it closes the last *"grows without bound"* concern specific to
+`audit_events`: Phase 9 capped the read, Phase 11 restated why that mattered, and Phase
+22 caps the table the read draws from. `inventory_transactions` is deliberately left
+unbounded — it is business history (BR-050/BR-051), kept for good, and
+`domain-model.md` §8 now records that the two tables diverge here on purpose.
+
+**No new FR** (the twelfth such note): FR-065 reads exactly as before. **One new BR**
+(BR-090) with BR-082 amended — "how long the log is kept" is a statement about the
+business, which is why it is a rule and the throttle-store change was not. **No
+migration, no schema change**: the prune reuses `IDX_audit_events_created_at` from Phase
+9, and `created_at` has been `timestamptz` since Phase 10. **No new configuration**: the
+one-year window is a constant, the deliberate inverse of Phase 21's `TRUST_PROXY`
+addition and consistent with Phase 9 §1's "the cap is a constant, not configuration"
+call for this feature's sibling number.

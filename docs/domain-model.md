@@ -172,7 +172,16 @@ both processes run on one machine today, and nothing checked that they did.
   immutable case, for the same reason: BR-082 makes a recorded event append-only, so
   `created_at` only, no `updated_at`. Having a second instance is itself a small
   piece of evidence that the immutable-table rule above was worth writing as a rule
-  rather than a one-off observation about `inventory_transactions`.
+  rather than a one-off observation about `inventory_transactions`. **[Updated
+  2026-09-08, Phase 22]** The rule is about the absence of `UPDATE` and of a *targeted*
+  `DELETE` — nothing edits a row or removes a chosen one — and that still holds. It
+  never implied unlimited retention, and Phase 9 §7 always flagged retention as a
+  separate, coming decision: Phase 22 (BR-090) bounds `audit_events` to a rolling
+  one-year window via a bulk, time-based prune. So the two tables §8 has cited together
+  since Phase 9 now diverge on purpose — `inventory_transactions` is immutable *and*
+  kept for good, because BR-050/BR-051 make it business history; `audit_events` is
+  immutable-in-shape but no longer retained forever, because a small business's audit
+  log is operational evidence with a shelf life (BR-082's "a record, not a proof").
 - **`adjustment_requests`** [Added 2026-09-03, Phase 12] — the **fourth mutable
   table**, so both `created_at` and `updated_at` (`timestamptz`, per the Phase 10
   convention — this is the first table created since that convention named a type). A

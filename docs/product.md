@@ -315,3 +315,14 @@ These affect the UI mockup and should be resolved before or during that phase.
   an operational table, not a domain entity), no `domain-model.md` change. It is the
   successor Phase 8 §7 named by hand. Q-7 (multi-location) remains open, untouched since
   Phase 5.
+- **[Added 2026-09-08, Phase 22]** `audit_events` retention (`docs/phase-22-plan.md`,
+  issue #12, `requirements.md`'s Phase 22 note, `business-rules.md` BR-090 with BR-082
+  amended, `docs/architecture-observations.md`'s Phase 22 section). Same shape as the
+  Phase 7, 10, 11, 14–17, and 19–21 entries, not Phase 9's, 12's, or 18's: §4 gains no
+  user goal, §5 no use case, §7 no scope — bounding the audit log to a rolling one-year
+  window by a background prune is an operational change an Owner never sees or triggers;
+  the audit screen (FR-065) reads exactly as before, minus events older than a year. No
+  new table, no migration, no `domain-model.md` entity (though §8 is updated: the table
+  is immutable-in-shape but no longer retained forever). It is the retention policy
+  Phase 9 §7 deferred by name, its trigger now met. Q-7 (multi-location) remains open,
+  untouched since Phase 5.

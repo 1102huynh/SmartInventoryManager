@@ -403,6 +403,51 @@ under it — the classic offset skipped-row bug, live. That is why Phase 11 §7 
 Phase 14 uses offset for catalogues without contradiction. **Offset pagination's
 correctness is a property of the table's write pattern, not of offset itself.**
 
+## A periodic bulk `DELETE` without a scheduler (Phase 21, Phase 22)
+
+Two tables in this project need periodic cleanup — `throttle_hits` (Phase 21) sheds
+expired rate-limit counters, `audit_events` (Phase 22) is pruned to a rolling one-year
+window — and this project has **no job scheduler** and has twice refused to add one
+(`@nestjs/schedule` in Phase 12 and Phase 21 Fork C2, `pg_cron` in Phase 21 §7). The
+pattern both phases used instead:
+
+```ts
+// in the service that owns the table's hot-path write (record() / increment())
+private maybeSweep(): void {
+  if (Math.random() >= SWEEP_PROBABILITY) return;          // ~0.001 — one call in a thousand
+  void this.doSweep().catch((err) => this.logger.warn(...)); // fire-and-forget, errors swallowed
+}
+// plus, once, at boot:
+async onApplicationBootstrap(): Promise<void> {
+  try { await this.doSweep(); } catch (err) { this.logger.warn(...); }
+}
+private async doSweep(): Promise<void> {
+  await this.repo.query(`DELETE FROM <table> WHERE <time column> < now() - …`);
+}
+```
+
+The cleanup piggybacks on the write that *drives the table's growth* — `throttle_hits`
+grows one row per throttled request, `audit_events` one per login attempt — so a small
+per-call probability still fires the `DELETE` many times a day on a live system, with
+none of it on a request's critical path (`maybeSweep` is not `await`ed; the request has
+already returned). `OnApplicationBootstrap` covers the case the dice never came up for:
+a new instance, or one restarted after a long stop.
+
+**Two properties make this legitimate, and a third use should be checked against both:**
+
+- **The work must tolerate being skipped.** Its loss is *bounded* (`audit_events`: at
+  worst a slightly oversized table until the next roll) or *ephemeral* (`throttle_hits`:
+  the limits reset for a few seconds) — never a wrong answer. The `DELETE` is swallowed
+  on failure exactly the way `AuditService.record`'s write is (BR-082), so a run of
+  failures degrades silently; that is the accepted trade, not an oversight.
+- **It must be cheap enough to be invisible** on the call that triggers it — one indexed
+  `DELETE` (`throttle_hits.expires_at`, `audit_events.created_at`, both already
+  indexed), not a scan, not a transaction wrapping anything else.
+
+A table whose stale rows are *business* data — `inventory_transactions` — is
+deliberately not swept at all: it is kept for good (BR-050/BR-051). The mechanism is for
+operational and security tables whose old rows have a shelf life.
+
 ## Common Mistakes
 
 - Giving a nullable TypeScript field (`string | null`) a `@Column()` with no explicit
